@@ -50,7 +50,7 @@ import Combine
     func beginRecording(to url: URL) async throws {
         stopPlayback()
         let allowed = await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+            AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
         }
         guard allowed else { throw MusicError.permission }
         let session = AVAudioSession.sharedInstance()
@@ -62,7 +62,13 @@ import Combine
         recorder?.isMeteringEnabled = true
         guard recorder?.record() == true else { throw MusicError.save("无法启动录音") }
         if metronomeBPM != nil {
-            let click = (0..<2000).map { Float(sin(2 * Double.pi * 1600 * Double($0) / 44100) * exp(-Double($0) / 300) * 0.15) }
+            var click = [Float]()
+            for sample in 0..<2000 {
+                let time = Double(sample) / 44100.0
+                let phase = 2.0 * Double.pi * 1600.0 * time
+                let envelope = exp(-Double(sample) / 300.0)
+                click.append(Float(sin(phase) * envelope * 0.15))
+            }
             metronome = try? AVAudioPlayer(data: AudioRenderer.pcmWAV(click, rate: 44100)); metronome?.prepareToPlay()
         }
         lastBeat = -1; elapsed = 0; levels = Array(repeating: 0, count: 64); recordingState = .recording

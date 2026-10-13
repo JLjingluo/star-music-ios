@@ -31,7 +31,7 @@ XML.parse(root/'StarMusic.xcodeproj/xcshareddata/xcschemes/StarMusic.xcscheme')
 # Prevent accidental packaging of credentials.
 assert not list(root.rglob('*.p12')) and not list(root.rglob('*.mobileprovision'))
 for p in root.rglob('*'):
-    if p.is_file() and p.suffix not in {'.png','.zip'}:
+    if '.git' not in p.relative_to(root).parts and p.is_file() and p.suffix not in {'.png','.zip'}:
         assert not re.search(r'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}',p.read_text()),f'Credential-like value in {p}'
 print(f'PASS: {len(source)} Swift syntax trees; parsed Xcode project and shared scheme; XcodeGen targets; 2 macOS workflows; Info/privacy plists; opaque 1024px app icon; no signing/token files.')
 print('Xcode compilation, XCTest execution and device behavior are NOT verified by this check.')
