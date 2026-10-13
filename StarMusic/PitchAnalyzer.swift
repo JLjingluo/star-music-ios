@@ -24,7 +24,7 @@ enum PitchAnalyzer {
     }
     static func analyze(_ data: [Float], sampleRate: Double, bpm: Double, free: Bool) throws -> [MusicNote] {
         guard data.count >= 2048 else { throw MusicError.noNotes }
-        let hop = max(1, Int(sampleRate * 0.035)); var result: [MusicNote] = []
+        let hop = max(1, Int((sampleRate * 0.035).rounded())); var result: [MusicNote] = []
         var active: (midi: Int, start: Double, end: Double, confidence: Double)?
         func appendActive() {
             guard let active, active.end - active.start > 0.085 else { return }
@@ -35,9 +35,13 @@ enum PitchAnalyzer {
         }
         for i in stride(from: 0, through: data.count - 2048, by: hop) {
             try Task.checkCancellation()
-            let pitch = detect(data[i..<(i + 2048)], rate: sampleRate), time = Double(i) / sampleRate
-            if let pitch, pitch.midi == active?.midi { let confidence = min(active?.confidence ?? 1, pitch.confidence); active?.end = time + 0.035; active?.confidence = confidence }
-            else { appendActive(); active = pitch.map { ($0.midi, time, time + 0.035, $0.confidence) } }
+            let pitch = detect(data[i..<(i + 2048)], rate: sampleRate)
+            // A pitch belongs to the center of its analysis window, not to the
+            // leading edge, which can still contain silence before an onset.
+            let time = (Double(i) + 1024.0) / sampleRate
+            let frameEnd = min(Double(data.count) / sampleRate, time + Double(hop) / sampleRate)
+            if let pitch, pitch.midi == active?.midi { let confidence = min(active?.confidence ?? 1, pitch.confidence); active?.end = frameEnd; active?.confidence = confidence }
+            else { appendActive(); active = pitch.map { ($0.midi, time, frameEnd, $0.confidence) } }
         }
         appendActive(); guard !result.isEmpty else { throw MusicError.noNotes }; return result
     }
