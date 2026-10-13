@@ -1,0 +1,10 @@
+.DS_Store
+StarMusic.xcodeproj/xcuserdata/
+StarMusic.xcodeproj/project.xcworkspace/xcuserdata/
+build/
+artifacts/
+*.xcuserstate
+*.p12
+*.mobileprovision
+*.keychain-db
+.env

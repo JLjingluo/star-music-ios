@@ -1,0 +1,51 @@
+name: iOS Simulator Build
+on:
+  push:
+    branches: [main]
+    paths: ['StarMusic/**', 'StarMusicTests/**', 'project.yml', 'scripts/**', '.github/workflows/ios-simulator.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: simulator-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode_16.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          fi
+          xcodebuild -version
+      - name: Generate Xcode project
+        run: |
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen generate
+      - name: Run music and storage tests
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')
+          xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO
+      - name: Build simulator app
+        run: |
+          xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app artifacts/StarMusic-Simulator.zip
+          cp README.md artifacts/README.md
+      - name: Upload simulator package
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarMusic-Simulator
+          path: artifacts/
+          retention-days: 14
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarMusic-TestResults
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

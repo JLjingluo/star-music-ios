@@ -1,0 +1,45 @@
+name: Signed iOS IPA
+on:
+  workflow_dispatch:
+    inputs:
+      distribution:
+        description: '签名方式（必须与描述文件匹配）'
+        required: true
+        type: choice
+        default: release-testing
+        options: [release-testing, debugging, app-store-connect]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_PROVISION_PROFILE_BASE64: ${{ secrets.APPLE_PROVISION_PROFILE_BASE64 }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID || 'music.star.starmusic' }}
+      EXPORT_METHOD: ${{ inputs.distribution }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate signing configuration
+        run: |
+          for key in APPLE_CERTIFICATE_P12_BASE64 APPLE_PROVISION_PROFILE_BASE64 APPLE_TEAM_ID; do
+            if [ -z "${!key}" ]; then printf 'Missing signing configuration: %s\n' "$key" >&2; exit 1; fi
+          done
+      - name: Select Xcode and generate project
+        run: |
+          if [ -d /Applications/Xcode_16.4.app ]; then sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer; fi
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen generate
+      - name: Archive and export signed IPA
+        shell: bash
+        run: bash scripts/build-signed.sh
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarMusic-IPA-${{ inputs.distribution }}
+          path: artifacts/*.ipa
+          if-no-files-found: error
+          retention-days: 7
