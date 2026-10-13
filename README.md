@@ -4,7 +4,16 @@
 
 ## 当前交付状态
 
-此目录是 **可供 Xcode / GitHub Actions 构建的源码工程**，不是已经编译或签名的 IPA。工程制作环境为 Linux，没有 Xcode；必须在 macOS 或 Actions 的 macOS runner 上完成首次编译并处理任何编译/实机问题。GitHub 仓库连接和 Apple 签名材料尚未提供。不能将源码 ZIP 或模拟器包宣称为可安装到 iPhone 的应用。
+已通过 GitHub Actions 的 macOS 15 / Xcode 16.4 云端编译，并在 iOS 18.5 iPhone 模拟器上执行 **9 项 XCTest，全部通过**。Release 模拟器应用已启动并截取首页；arm64 真机应用已编译并打包为 **未签名 IPA**。
+
+- 私有仓库：https://github.com/JLjingluo/star-music-ios
+- 成功构建：https://github.com/JLjingluo/star-music-ios/actions/runs/38422764650
+- 构建提交：`16789e6264a7c3051e76b05a5037bbdafb9bbde2`
+- `StarMusic-iOS-Unsigned` artifact：解压得到 `StarMusic-Unsigned.ipa`。
+- `StarMusic-Simulator` artifact：模拟器应用 ZIP、原生首页截图和使用说明。
+- `StarMusic-TestResults` artifact：XCTest 结果。
+
+未签名 IPA 不能直接安装到 iPhone；安装前需要有效的 Apple 签名。带签名的 IPA 流程已配置，但 Apple 签名材料尚未提供，未执行。真实麦克风权限、来电、耳机切换和实际音频效果仍需实机检查。当前执行环境从 Actions 附件存储下载返回 403，因此附件由用户登录 GitHub 后直接获取，未在此环境解包检查。
 
 ## 已写入的第一阶段功能
 
