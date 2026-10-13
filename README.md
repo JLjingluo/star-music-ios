@@ -37,9 +37,9 @@ open StarMusic.xcodeproj
 
 ## GitHub 模拟器构建
 
-将此目录上传到私有 GitHub 仓库的根目录。推送 `main` 分支会触发 **iOS Simulator Build**；也可在 Actions 中手动 Run workflow。
+将此目录上传到私有 GitHub 仓库的根目录。推送 `main` 分支会触发 **iOS Build and Test**；也可在 Actions 中手动 Run workflow。
 
-构建顺序：生成 Xcode 工程 → 在模拟器上运行音乐/草稿测试 → 编译 Release 模拟器应用 → 上传 `StarMusic-Simulator` artifact 和测试结果。
+构建顺序：生成 Xcode 工程 → 在模拟器上运行音乐/草稿测试 → 编译 Release 模拟器应用及未签名真机 IPA → 上传 `StarMusic-Simulator` artifact 和测试结果。
 
 下载 artifact 后解压 `StarMusic-Simulator.zip`，在 Mac 上安装到运行中的模拟器：
 
@@ -47,6 +47,8 @@ open StarMusic.xcodeproj
 xcrun simctl install booted StarMusic.app
 xcrun simctl launch booted music.star.starmusic
 ```
+
+另外会生成 `StarMusic-iOS-Unsigned` artifact，内含 arm64 真机应用 `StarMusic-Unsigned.ipa`。此 IPA **尚未签名，不能直接安装**，可用本机 Xcode 或可信的侧载签名工具结合自己的 Apple ID 完成签名；个人开发签名的设备数量、有效期和能力受 Apple 限制。
 
 模拟器 ZIP **不能安装到真实 iPhone**。GitHub macOS runner 可能消耗账户的 Actions 配额。
 

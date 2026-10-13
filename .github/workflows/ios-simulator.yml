@@ -1,4 +1,4 @@
-name: iOS Simulator Build
+name: iOS Build and Test
 on:
   push:
     branches: [main]
@@ -35,11 +35,27 @@ jobs:
           mkdir -p artifacts
           ditto -c -k --sequesterRsrc --keepParent build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app artifacts/StarMusic-Simulator.zip
           cp README.md artifacts/README.md
+      - name: Build unsigned device IPA
+        run: |
+          xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
+          mkdir -p build/unsigned/Payload
+          cp -R build/device/Build/Products/Release-iphoneos/StarMusic.app build/unsigned/Payload/
+          cd build/unsigned
+          zip -qr "$GITHUB_WORKSPACE/artifacts/StarMusic-Unsigned.ipa" Payload
+      - name: Upload unsigned device IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarMusic-iOS-Unsigned
+          path: artifacts/StarMusic-Unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload simulator package
         uses: actions/upload-artifact@v4
         with:
           name: StarMusic-Simulator
-          path: artifacts/
+          path: |
+            artifacts/StarMusic-Simulator.zip
+            artifacts/README.md
           retention-days: 14
       - name: Upload test results
         if: always()
