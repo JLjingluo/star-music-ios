@@ -60,4 +60,29 @@ final class InteractionTests: XCTestCase {
         XCTAssertEqual(control.value as? String, original)
         capture("Profile-Light")
     }
+    func testTrackChooserModesAndModelConfiguration() {
+        let app = launch()
+        app.buttons["home.blank"].tap()
+        XCTAssertTrue(app.buttons["editor.addTrack"].waitForExistence(timeout: 8))
+        app.swipeUp()
+        app.buttons["editor.addTrack"].tap()
+        XCTAssertTrue(app.buttons["track.addRecording"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["track.addImport"].exists)
+        capture("Track-Chooser")
+        app.buttons["track.addBlank"].tap()
+        XCTAssertTrue(app.buttons["编辑 新声部 2 的音符"].waitForExistence(timeout: 5))
+        capture("Tracks-Standard")
+        app.swipeDown()
+        app.buttons["studio.modeMenu"].tap()
+        app.buttons["专业模式"].tap()
+        XCTAssertTrue(app.buttons["recognition.engine"].waitForExistence(timeout: 5))
+        capture("Tracks-Professional")
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
+        app.buttons["tab.profile"].tap()
+        app.cells.containing(.staticText, identifier: "识谱与我的模型").firstMatch.tap()
+        XCTAssertTrue(app.textFields["model.identifier"].waitForExistence(timeout: 5))
+        capture("Model-Settings")
+    }
+
 }

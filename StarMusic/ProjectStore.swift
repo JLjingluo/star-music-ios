@@ -47,36 +47,62 @@ import Combine
         copy.tracks = copy.tracks.map { track in
             var t = track; t.id = UUID(); t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; return t
         }
-        if let file = p.recordingFile {
+        var replacements: [String: String] = [:]
+        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
+        for file in files {
             let newName = UUID().uuidString + "." + URL(fileURLWithPath: file).pathExtension
             try FileManager.default.copyItem(at: recordingDirectory.appendingPathComponent(file), to: recordingDirectory.appendingPathComponent(newName))
-            copy.recordingFile = newName
+            replacements[file] = newName
         }
+        copy.recordingFile = p.recordingFile.flatMap { replacements[$0] }
+        for index in copy.tracks.indices { copy.tracks[index].recordingFile = p.tracks[index].recordingFile.flatMap { replacements[$0] }; copy.tracks[index].sourceHistory = p.tracks[index].sourceHistory?.compactMap { replacements[$0] } }
+
         try save(copy)
     }
-    func recordingURL(_ p: MusicProject) -> URL? { p.recordingFile.map { recordingDirectory.appendingPathComponent($0) } }
+    func recordingURL(_ p: MusicProject, trackID: UUID? = nil) -> URL? {
+        if let id = trackID, !p.tracks.contains(where: { $0.id == id }) { return nil }
+        let track = trackID.flatMap { id in p.tracks.first { $0.id == id } } ?? p.tracks.first
+        let file = track?.recordingFile ?? ((trackID == nil || trackID == p.tracks.first?.id) ? p.recordingFile : nil)
+        return file.map { recordingDirectory.appendingPathComponent($0) }
+    }
     func package(_ p: MusicProject) throws -> URL {
-        let recording = try recordingURL(p).map { try Data(contentsOf: $0) }
-        let pack = ProjectPackage(project: p, recording: recording)
+        try p.validate()
+        var originals: [String: Data] = [:], total = 0
+        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
+        for file in files {
+            let data = try Data(contentsOf: recordingDirectory.appendingPathComponent(file)); total += data.count
+            guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
+            originals[file] = data
+        }
+        let pack = ProjectPackage(project: p, recording: nil, recordings: originals)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".starmusic")
         try encoder.encode(pack).write(to: url, options: .atomic); return url
     }
     func importPackage(_ data: Data) throws -> MusicProject {
+        guard data.count <= 512 * 1024 * 1024 else { throw MusicError.tooLarge }
         var pack = (try? decoder.decode(ProjectPackage.self, from: data))
         if pack == nil { pack = try WebProjectImport.decode(data) }
-        guard var pack else { throw MusicError.invalidProject }
-        guard pack.format == "StarMusicNative", pack.version == 1 else { throw MusicError.invalidProject }
+        guard let pack, pack.format == "StarMusicNative", (1...2).contains(pack.version) else { throw MusicError.invalidProject }
         try pack.project.validate()
         var p = pack.project; p.id = UUID(); p.deleted = false; p.sample = false; p.updated = Date(); p.created = Date()
         p.tracks = p.tracks.map { var t = $0; t.id = UUID(); t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; return t }
-        if let recording = pack.recording {
-            guard recording.count <= 32 * 1024 * 1024 else { throw MusicError.tooLarge }
-            let ext = p.recordingFile.map { URL(fileURLWithPath: $0).pathExtension } ?? "wav"
-            let name = UUID().uuidString + "." + ext
-            try recording.write(to: recordingDirectory.appendingPathComponent(name), options: .atomic); p.recordingFile = name
-        } else { p.recordingFile = nil }
-        pack.recording = nil; try save(p); return p
+        var originals = pack.recordings ?? [:]
+        if let old = pack.recording { originals[pack.project.recordingFile ?? "original.wav"] = old }
+        var replacements: [String: String] = [:], total = 0
+        for (file, recording) in originals {
+            guard MusicProject.validRecordingName(file) else { throw MusicError.invalidProject }
+            total += recording.count; guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
+            let name = UUID().uuidString + "." + URL(fileURLWithPath: file).pathExtension
+            try recording.write(to: recordingDirectory.appendingPathComponent(name), options: .atomic); replacements[file] = name
+        }
+        // New identifiers and copied source files make every imported project independent.
+        let required = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
+        guard required.isSubset(of: Set(replacements.keys)) else { throw MusicError.invalidProject }
+        p.recordingFile = p.recordingFile.flatMap { replacements[$0] }
+        for i in p.tracks.indices { p.tracks[i].recordingFile = p.tracks[i].recordingFile.flatMap { replacements[$0] }; p.tracks[i].sourceHistory = p.tracks[i].sourceHistory?.compactMap { replacements[$0] } }
+        try save(p); return p
     }
+
 }
 
 @MainActor final class EditorSession: ObservableObject {
@@ -89,7 +115,7 @@ import Combine
     let store: ProjectStore
     init(_ project: MusicProject, store: ProjectStore) { self.project = project; self.store = store }
     func edit(_ operation: (inout MusicProject) -> Void) {
-        undoHistory.append(project); if undoHistory.count > 60 { undoHistory.removeFirst() }; redoHistory = []
+        undoHistory.append(project); if undoHistory.count > 256 { undoHistory.removeFirst() }; redoHistory = []
         operation(&project); project.updated = Date(); persist()
     }
     @discardableResult func persist() -> Bool {

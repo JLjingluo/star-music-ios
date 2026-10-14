@@ -20,6 +20,13 @@ source_ids=[];build_ids=[]
 for path in app_files:
     source_ids.append(obj('file:'+path.name,'PBXFileReference',f'lastKnownFileType = sourcecode.swift; path = {q(path.name)}; sourceTree = "<group>";'))
     build_ids.append(obj('build:'+path.name,'PBXBuildFile',f'fileRef = {ident("file:"+path.name)};'))
+model_file=obj('crepe-model','PBXFileReference','lastKnownFileType = folder.mlpackage; path = Resources/PitchCREPE.mlpackage; sourceTree = "<group>";')
+model_build=obj('crepe-build','PBXBuildFile',f'fileRef = {model_file};')
+build_ids.append(model_build)
+notice_ids=[];notice_builds=[]
+for filename in ['CREPE-LICENSE.txt','MODEL-MANIFEST.json']:
+    ref=obj('resource:'+filename,'PBXFileReference',f'lastKnownFileType = text; path = Resources/{filename}; sourceTree = "<group>";')
+    notice_ids.append(ref);notice_builds.append(obj('resourcebuild:'+filename,'PBXBuildFile',f'fileRef = {ref};'))
 test_file=obj('testfile','PBXFileReference','lastKnownFileType = sourcecode.swift; path = MusicTests.swift; sourceTree = "<group>";')
 test_build=obj('testbuild','PBXBuildFile',f'fileRef = {test_file};')
 asset=obj('asset','PBXFileReference','lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>";')
@@ -29,7 +36,7 @@ asset_build=obj('assetbuild','PBXBuildFile',f'fileRef = {asset};')
 plist=obj('plist','PBXFileReference','lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";')
 app_product=obj('app-product','PBXFileReference','explicitFileType = wrapper.application; includeInIndex = 0; path = StarMusic.app; sourceTree = BUILT_PRODUCTS_DIR;')
 test_product=obj('test-product','PBXFileReference','explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StarMusicTests.xctest; sourceTree = BUILT_PRODUCTS_DIR;')
-app_group=obj('app-group','PBXGroup',f'children = {refs(source_ids+[asset,plist,privacy])}; path = StarMusic; sourceTree = "<group>";')
+app_group=obj('app-group','PBXGroup',f'children = {refs(source_ids+[asset,plist,privacy,model_file]+notice_ids)}; path = StarMusic; sourceTree = "<group>";')
 test_group=obj('test-group','PBXGroup',f'children = {refs([test_file])}; path = StarMusicTests; sourceTree = "<group>";')
 ui_file=obj('uifile','PBXFileReference','lastKnownFileType = sourcecode.swift; path = InteractionTests.swift; sourceTree = "<group>";')
 ui_build=obj('uibuild','PBXBuildFile',f'fileRef = {ui_file};')
@@ -39,7 +46,7 @@ products=obj('products' ,'PBXGroup',f'children = {refs([app_product,test_product
 main=obj('main','PBXGroup',f'children = {refs([app_group,test_group,ui_group,products])}; sourceTree = "<group>";')
 app_sources=obj('app-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {refs(build_ids)}; runOnlyForDeploymentPostprocessing = 0;')
 test_sources=obj('test-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {refs([test_build])}; runOnlyForDeploymentPostprocessing = 0;')
-app_resources=obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {refs([asset_build,privacy_build])}; runOnlyForDeploymentPostprocessing = 0;')
+app_resources=obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {refs([asset_build,privacy_build]+notice_builds)}; runOnlyForDeploymentPostprocessing = 0;')
 app_frameworks=obj('app-frameworks','PBXFrameworksBuildPhase','buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
 test_frameworks=obj('test-frameworks','PBXFrameworksBuildPhase','buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
 proxy=obj('proxy','PBXContainerItemProxy',f'containerPortal = {ident("project")}; proxyType = 1; remoteGlobalIDString = {ident("app-target")}; remoteInfo = StarMusic;')
@@ -53,7 +60,7 @@ def configs(name,settings):
         body=' '.join(f'{k} = {q(v)};' for k,v in merged.items())
         ids.append(obj(name+'-'+conf,'XCBuildConfiguration',f'buildSettings = {{ {body} }}; name = {conf};'))
     return obj(name+'-configs','XCConfigurationList',f'buildConfigurations = {refs(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
-base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','ENABLE_USER_SCRIPT_SANDBOXING':'YES','MARKETING_VERSION':'0.3.1','CURRENT_PROJECT_VERSION':'3','CODE_SIGN_STYLE':'Automatic','DEVELOPMENT_TEAM':''}
+base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','ENABLE_USER_SCRIPT_SANDBOXING':'YES','MARKETING_VERSION':'0.4.0','CURRENT_PROJECT_VERSION':'4','CODE_SIGN_STYLE':'Automatic','DEVELOPMENT_TEAM':''}
 project_configs=configs('project',base)
 app_configs=configs('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'music.star.starmusic','INFOPLIST_FILE':'StarMusic/Info.plist','GENERATE_INFOPLIST_FILE':'NO','TARGETED_DEVICE_FAMILY':'1,2','ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator'})
 test_configs=configs('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'music.star.starmusic.tests','GENERATE_INFOPLIST_FILE':'YES','TEST_HOST':'$(BUILT_PRODUCTS_DIR)/StarMusic.app/StarMusic','BUNDLE_LOADER':'$(TEST_HOST)','TARGETED_DEVICE_FAMILY':'1,2','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @loader_path/Frameworks'})

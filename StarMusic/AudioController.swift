@@ -81,12 +81,12 @@ import Combine
     func finishRecording() { elapsed = max(elapsed, recorder?.currentTime ?? 0); recorder?.stop(); recorder = nil; metronome?.stop(); metronome = nil; recordingState = .finished; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
     func resetRecording() { finishRecording(); elapsed = 0; recordingState = .ready }
     func handleInterruption(_ message: String) { pauseRecording(); stopPlayback(); interruptionMessage = message }
-    func play(_ project: MusicProject) async throws {
+    func play(_ project: MusicProject, recordingDirectory: URL? = nil) async throws {
         if playingID == project.id { stopPlayback(); return }
         stopPlayback()
         let generation = playbackGeneration
         guard project.seconds <= 600 else { throw MusicError.tooLarge }
-        let data = try await Task.detached(priority: .userInitiated) { try AudioRenderer.wav(project) }.value
+        let data = try await Task.detached(priority: .userInitiated) { try AudioRenderer.wav(project, recordingDirectory: recordingDirectory) }.value
         guard generation == playbackGeneration else { return }
         try configurePlayback()
         player = try AVAudioPlayer(data: data); player?.delegate = self; player?.numberOfLoops = loop ? -1 : 0
@@ -117,16 +117,50 @@ import Combine
         for channel in 0..<count { for frame in 0..<frames { data[frame] += channels[channel][frame] / Float(count) } }
         return (data, buffer.format.sampleRate)
     }
+    nonisolated static func resample(_ source: [Float], from inputRate: Double, to outputRate: Double) throws -> [Float] {
+        guard inputRate.isFinite, outputRate.isFinite, inputRate > 0, outputRate > 0 else { throw MusicError.invalidProject }
+        if abs(inputRate - outputRate) < 1 { return source }
+        guard !source.isEmpty else { return [] }
+        guard let inputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inputRate, channels: 1, interleaved: false),
+              let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputRate, channels: 1, interleaved: false),
+              let input = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(source.count)),
+              let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(ceil(Double(source.count) * outputRate / inputRate)) + 64),
+              let converter = AVAudioConverter(from: inputFormat, to: outputFormat), let channels = input.floatChannelData else { throw MusicError.invalidProject }
+        input.frameLength = AVAudioFrameCount(source.count)
+        source.withUnsafeBufferPointer { buffer in if let base = buffer.baseAddress { channels[0].update(from: base, count: source.count) } }
+        converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
+        var supplied = false, error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, state in
+            if supplied { state.pointee = .endOfStream; return nil }
+            supplied = true; state.pointee = .haveData; return input
+        }
+        if let error { throw error }
+        guard status != .error, let result = output.floatChannelData else { throw MusicError.invalidProject }
+        return Array(UnsafeBufferPointer(start: result[0], count: Int(output.frameLength)))
+    }
 }
 
 enum AudioRenderer {
-    static func wav(_ project: MusicProject) throws -> Data {
+    static func wav(_ project: MusicProject, recordingDirectory: URL? = nil) throws -> Data {
         try project.validate()
         guard project.seconds <= 600 else { throw MusicError.tooLarge }
         let sr = 44100.0, count = Int((project.seconds + 0.4) * sr)
         var samples = [Float](repeating: 0, count: count)
         let solo = project.tracks.contains { $0.solo }
         for track in project.tracks where !track.muted && (!solo || track.solo) {
+            try Task.checkCancellation()
+            if track.useOriginalAudio == true {
+                let root = recordingDirectory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("StarMusic/Recordings", isDirectory: true)
+                let file = track.recordingFile ?? (track.id == project.tracks.first?.id ? project.recordingFile : nil)
+                guard let file else { throw MusicError.invalidProject }
+                let source = try AudioController.samples(from: root.appendingPathComponent(file))
+                let raw = try AudioController.resample(source.samples, from: source.sampleRate, to: sr)
+                let low = min(raw.count, Int((track.trimStart ?? 0) * sr))
+                let high = min(raw.count, Int((track.trimEnd ?? Double(raw.count) / sr) * sr))
+                let offset = Int((track.sourceStartBeat ?? 0) * 60 / project.bpm * sr)
+                for i in low..<max(low, high) where i - low + offset < count { samples[i - low + offset] += raw[i] * Float(track.volume) }
+                continue
+            }
             for note in track.notes {
                 guard let midi = note.midi else { continue }
                 let start = Int(note.start * 60 / project.bpm * sr), length = Int(note.duration * 60 / project.bpm * sr)
@@ -134,6 +168,7 @@ enum AudioRenderer {
                 let end = min(count, start + length + 6000)
                 guard start < end else { continue }
                 for frame in start..<end {
+                    if frame % 16384 == 0 { try Task.checkCancellation() }
                     let t = Double(frame - start) / sr, phase = 2 * Double.pi * frequency * t
                     let attack = min(1, t / 0.012), tail = frame - start > length ? exp(-Double(frame - start - length) / 1000) : 1
                     let sound: Double

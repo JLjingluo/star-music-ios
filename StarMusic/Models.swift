@@ -33,9 +33,20 @@ struct MusicTrack: Codable, Identifiable, Equatable, Sendable {
     var solo = false
     var notes: [MusicNote] = []
     var assignment: String?
+    var recordingFile: String?
+    var recordingSeconds: Double?
+    var useOriginalAudio: Bool?
+    var sourceStartBeat: Double?
+    var trimStart: Double?
+    var trimEnd: Double?
+    var transcript: String?
+    var recognitionSource: String?
+    var sourceHistory: [String]?
+    var sourceDuration: Double { max(0, (trimEnd ?? recordingSeconds ?? 0) - (trimStart ?? 0)) }
 }
 
 struct MusicProject: Codable, Identifiable, Equatable, Sendable {
+    static func validRecordingName(_ file: String) -> Bool { !file.isEmpty && file.count <= 240 && file != "." && file != ".." && !file.contains("/") && !file.contains("\\") && !file.contains("\0") }
     var id = UUID()
     var name = "未命名的旋律"
     var bpm: Double = 96
@@ -51,7 +62,11 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
     var recordingSeconds: Double?
     var source: String?
     var tracks = [MusicTrack()]
-    var beats: Double { max(4, tracks.flatMap(\.notes).map { $0.start + $0.duration }.max() ?? 4) }
+    var beats: Double {
+        let notes = tracks.flatMap(\.notes).map { $0.start + $0.duration }.max() ?? 4
+        let clips = tracks.filter { $0.recordingFile != nil }.map { ($0.sourceStartBeat ?? 0) + $0.sourceDuration * bpm / 60 }.max() ?? 0
+        return max(max(4, notes), clips)
+    }
     var seconds: Double { beats * 60 / bpm }
     var bars: Int { max(1, Int(ceil(beats / 4))) }
     static func example(_ index: Int) -> MusicProject {
@@ -63,15 +78,20 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
         return p
     }
     func validate() throws {
-        guard !name.isEmpty, name.count <= 120, bpm.isFinite, (30...300).contains(bpm), (1...32).contains(tracks.count) else { throw MusicError.invalidProject }
-        guard recordingFile == nil || recordingFile == URL(fileURLWithPath: recordingFile!).lastPathComponent else { throw MusicError.invalidProject }
+        guard !name.isEmpty, name.count <= 120, bpm.isFinite, (30...300).contains(bpm), (1...128).contains(tracks.count) else { throw MusicError.invalidProject }
+        guard recordingFile.map(Self.validRecordingName) ?? true else { throw MusicError.invalidProject }
         var count = 0
         for track in tracks {
             guard track.volume.isFinite, (0...1).contains(track.volume) else { throw MusicError.invalidProject }
+            guard track.recordingFile.map(Self.validRecordingName) ?? true else { throw MusicError.invalidProject }
+            for file in track.sourceHistory ?? [] { guard Self.validRecordingName(file) else { throw MusicError.invalidProject } }
+            for value in [track.recordingSeconds, track.sourceStartBeat, track.trimStart, track.trimEnd].compactMap({ $0 }) { guard value.isFinite, value >= 0, value <= 100000 else { throw MusicError.invalidProject } }
+            guard (track.trimEnd ?? track.recordingSeconds ?? 0) >= (track.trimStart ?? 0) else { throw MusicError.invalidProject }
+            if let length = track.recordingSeconds, let end = track.trimEnd { guard end <= length + 0.01 else { throw MusicError.invalidProject } }
             for note in track.notes {
                 count += 1
                 guard count <= 20000, note.start.isFinite, note.start >= 0, note.duration.isFinite, note.duration > 0, note.start + note.duration <= 100000,
-                      note.midi == nil || (0...127).contains(note.midi!) else { throw MusicError.invalidProject }
+                      note.midi == nil || (0...127).contains(note.midi!), note.confidence.isFinite, (0...1).contains(note.confidence) else { throw MusicError.invalidProject }
             }
         }
     }
@@ -79,9 +99,10 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
 
 struct ProjectPackage: Codable {
     var format = "StarMusicNative"
-    var version = 1
+    var version = 2
     var project: MusicProject
     var recording: Data?
+    var recordings: [String: Data]?
 }
 
 enum MusicError: LocalizedError {
@@ -92,7 +113,7 @@ enum MusicError: LocalizedError {
         case .invalidMIDI: "MIDI 文件不完整，或使用了暂不支持的时间格式。"
         case .noNotes: "没有识别出清晰的音符，原始录音仍保留在草稿中。"
         case .permission: "麦克风权限被拒绝。可以前往系统设置允许麦克风，或从空白乐谱开始。"
-        case .tooLarge: "首版支持 32 MB 以内文件，以及 5 分钟以内的音频。"
+        case .tooLarge: "支持 256 MB 以内音频文件、512 MB 以内项目包；单次音频分析最长 5 分钟，成品导出最长 10 分钟。"
         case .save(let reason): "保存失败：\(reason)。当前编辑仍保留在内存中。"
         }
     }

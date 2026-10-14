@@ -11,6 +11,7 @@ struct CreationHome: View {
     @State private var chooser = false
     @State private var instruments = false
     @State private var pendingChoice: StartChoice?
+    @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
     private enum StartChoice { case record, blank, file }
     private var drafts: [MusicProject] { Array(store.projects.filter { !$0.deleted }.prefix(3)) }
 
@@ -21,10 +22,10 @@ struct CreationHome: View {
                 introduction.cascade(1)
                 creationCard.cascade(2)
                 importCard.cascade(3)
-                toolShelf.cascade(4)
+                if rawMode != StudioMode.simple.rawValue { toolShelf.cascade(4) }
                 draftsHeading.cascade(5)
                 recentDrafts
-                Label("灵感保存在此设备，随时继续。", systemImage: "lock")
+                Label(RecognitionSettings.load().engine == .cloud ? "大模型转谱会发送所选原声至你配置的接口。" : "灵感保存在此设备，随时继续。", systemImage: RecognitionSettings.load().engine == .cloud ? "network" : "lock")
                     .font(.caption2).foregroundStyle(.secondary.opacity(0.8)).padding(.top, 2).cascade(8)
             }.padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 24)
                 .frame(maxWidth: 740).frame(maxWidth: .infinity)
@@ -203,7 +204,7 @@ struct DraftRow: View {
             HStack(spacing: 0) {
             if compact { Spacer(minLength: 0) }
             if project.deleted { Button("恢复") { store.update(project) { $0.deleted = false } }.font(.caption).frame(minWidth: 44, minHeight: 44) }
-            else { Button { Task { do { try await audio.play(project) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == project.id).font(.caption).frame(width: 44, height: 44) }.buttonStyle(MusicPressStyle()).accessibilityLabel("试听 \(project.name)") }
+            else { Button { Task { do { try await audio.play(project, recordingDirectory: store.recordingDirectory) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == project.id).font(.caption).frame(width: 44, height: 44) }.buttonStyle(MusicPressStyle()).accessibilityLabel("试听 \(project.name)") }
             Menu {
                 if !project.deleted {
                     Button("重命名", systemImage: "pencil") { name = project.name; rename = true }
@@ -335,9 +336,11 @@ struct MessagesView: View {
     var body: some View { ScrollView { VStack(spacing: 18) { ForEach([("bubble.left", "评论与回复"), ("heart", "赞与收藏"), ("person.badge.plus", "新关注"), ("bell", "系统通知")], id: \.1) { symbol, title in HStack { Image(systemName: symbol).frame(width: 32); Text(title); Spacer(); Text("未接入").font(.caption).foregroundStyle(.secondary) }.musicCard() }; EmptyState(symbol: "bubble.left.and.bubble.right", title: "这里，将是音乐的回声", subtitle: "在线消息服务尚未接入。当前没有真实社区通知。") }.padding(16) }.navigationTitle("消息") }
 }
 struct ProfileView: View {
+    @Environment(\.colorScheme) private var scheme
     @EnvironmentObject var store: ProjectStore
     @AppStorage("appearance") private var appearance = "dark"
     @AppStorage("hapticsEnabled") private var haptics = true
+    @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
     var onOpen: (MusicProject) -> Void
     @State private var help = false
     var body: some View {
@@ -349,12 +352,15 @@ struct ProfileView: View {
                 Label("已发布作品 · 服务尚未接入", systemImage: "music.note").foregroundStyle(.secondary)
             }
             Section("设置") {
+                Picker("创作模式", selection: $rawMode) { ForEach(StudioMode.allCases) { Text($0.title).tag($0.rawValue) } }.accessibilityIdentifier("settings.studioMode")
+                Text((StudioMode(rawValue: rawMode) ?? .standard).detail).font(.caption).foregroundStyle(.secondary)
                 Picker("外观", selection: $appearance) { Text("深色").tag("dark"); Text("浅色").tag("light"); Text("跟随系统").tag("system") }
+                NavigationLink { RecognitionSettingsView() } label: { Label("识谱与我的模型", systemImage: "waveform.badge.magnifyingglass") }
                 Toggle("轻触反馈", isOn: $haptics).toggleStyle(JellyToggleStyle()).accessibilityIdentifier("settings.haptics")
                 Button { help = true } label: { Label("关于与帮助", systemImage: "questionmark.circle") }
             }
             Section { Text("草稿保存在本机应用沙盒中。删除应用会移除本地数据；请定期通过草稿菜单导出项目包。所有音源为内置合成，无需联网下载。").font(.caption).foregroundStyle(.secondary) }
-        }.navigationTitle("我的").sheet(isPresented: $help) { HelpView() }
+        }.navigationTitle("我的").scrollContentBackground(.hidden).background(Palette.background(scheme)).sheet(isPresented: $help) { HelpView() }
     }
 }
 struct LocalCollectionView: View {

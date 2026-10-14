@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor struct EditorView: View {
     @EnvironmentObject var audio: AudioController
@@ -20,12 +21,25 @@ import SwiftUI
     @State private var analysis: Task<Void, Never>?
     @State private var reanalyze = false
     @State private var loop = false
+    @State private var addTrack = false
+    @State private var trackChoice: String?
+    @State private var importer = false
+    @State private var importTrackID: UUID?
+    @State private var recording: TrackRecordingRoute?
+    @State private var recordConfirmation: UUID?
+    @State private var modelSettings = false
+    @State private var stage = "正在处理音频…"
+    @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
+    @State private var expandedTools = false
+    private var simpleMode: Bool { rawMode == StudioMode.simple.rawValue && !expandedTools }
     init(project: MusicProject, store: ProjectStore) { _session = StateObject(wrappedValue: EditorSession(project, store: store)) }
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
-                    parameterBar
+                    HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); StudioModeMenu() }
+                    if !simpleMode { parameterBar }
+                    if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() }
                     Picker("编辑视图", selection: $multiTrack) { Text("五线谱").tag(false); Text("多轨编曲").tag(true) }.pickerStyle(.segmented)
                     if multiTrack { trackList }
                     else {
@@ -38,18 +52,19 @@ import SwiftUI
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 135))], spacing: 10) {
                         ToolCard(title: addMode ? "结束添加" : "添加音符", subtitle: "明确的添加模式", symbol: "plus") { addMode.toggle() }
                         ToolCard(title: "乐器", subtitle: session.track.instrument.name, symbol: session.track.instrument.symbol) { instruments = true }
-                        ToolCard(title: "添加声部", subtitle: "新增一条空轨", symbol: "square.stack.3d.up") { audio.stopPlayback(); session.edit { $0.tracks.append(MusicTrack(name: "新声部 \($0.tracks.count + 1)")) }; session.trackIndex = session.project.tracks.count - 1; multiTrack = true }
-                        Menu {
+                        ToolCard(title: "添加声部", subtitle: "空轨、录唱或文件", symbol: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
+                        if !simpleMode { Menu {
                             Button("整体移调") { transpose = true }
                             Button("复制主旋律为新轨道") { session.edit { p in var t = p.tracks[0]; t.id = UUID(); t.name += " · 副本"; t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; p.tracks.append(t) }; multiTrack = true }
                             Button("复制当前小节到结尾") { copyBar() }
                             Button("量化当前轨道") { let index = session.trackIndex; session.edit { p in for i in p.tracks[index].notes.indices { p.tracks[index].notes[i].start = (p.tracks[index].notes[i].start * 4).rounded() / 4; p.tracks[index].notes[i].duration = max(0.25, (p.tracks[index].notes[i].duration * 4).rounded() / 4) }; p.freeRhythm = false } }
-                            if session.project.recordingFile != nil {
-                                Button("试听原始录音") { if let url = session.store.recordingURL(session.project) { do { try audio.playOriginal(url) } catch { session.store.error = error.localizedDescription } } }
+                            if session.store.recordingURL(session.project, trackID: session.track.id) != nil {
+                                Button("试听原始录音") { if let url = session.store.recordingURL(session.project, trackID: session.track.id) { do { try audio.playOriginal(url) } catch { session.store.error = error.localizedDescription } } }
                                 Button("重新分析原始录音") { reanalyze = true }
                             }
-                        } label: { HStack { Image(systemName: "ellipsis").frame(width: 30, height: 44); Text("更多工具").font(.subheadline) }.frame(maxWidth: .infinity, minHeight: 72).musicCard() }
+                        } label: { HStack { Image(systemName: "ellipsis").frame(width: 30, height: 44); Text("更多工具").font(.subheadline) }.frame(maxWidth: .infinity, minHeight: 72).musicCard() } }
                     }
+                    if rawMode == StudioMode.simple.rawValue { Button(expandedTools ? "收起更多工具" : "展开更多工具") { expandedTools.toggle() }.frame(minHeight: 44) }
                     Label("自动保存至本地 · 三种内置合成音色", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
                 }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
             }.background(Palette.background(scheme))
@@ -67,6 +82,14 @@ import SwiftUI
         .interactiveDismissDisabled(session.saveStatus.contains("失败"))
         .sheet(isPresented: $instruments) { InstrumentSheet(selectedNote: session.selected != nil, bars: session.project.bars, current: session.track.instrument, onApply: applyInstrument) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
+        .sheet(isPresented: $modelSettings) { NavigationStack { RecognitionSettingsView() } }
+        .sheet(isPresented: $addTrack, onDismiss: performTrackChoice) { addTrackSheet }
+        .fullScreenCover(item: $recording) { route in RecordingView(project: route.project, targetTrackID: route.id, onSaved: acceptRecording) { project in acceptRecording(project); recording = nil } }
+        .confirmationDialog("在此音轨重新录唱？", isPresented: Binding(get: { recordConfirmation != nil }, set: { if !$0 { recordConfirmation = nil } }), titleVisibility: .visible) { Button("录唱并生成新音符") { if let id = recordConfirmation { recordConfirmation = nil; openRecording(id) } }; Button("取消", role: .cancel) { recordConfirmation = nil } } message: { Text("识别成功后替换此轨音符，可撤销；历史原声保留。其他音轨不受影响。") }
+        .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .midi], allowsMultipleSelection: false) { result in
+            switch result { case .success(let urls): if let url = urls.first { Task { await importToTrack(url) } }; case .failure(let error): session.store.error = error.localizedDescription }
+        }
+
         .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button("项目包（含原始录音）") { exportProject() }; Button("MIDI 文件") { exportMIDI() }; Button("WAV 音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
         .alert("发布服务尚未接入", isPresented: $publish) { Button("导出 WAV 分享") { Task { await exportWAV() } }; Button("继续创作", role: .cancel) {} } message: { Text("作品仍是本地草稿。你可以导出音频分享，不会显示模拟发布成功。") }
         .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text("当前编辑仍保留在内存中。保存失败时不会直接退出。") }
@@ -78,10 +101,24 @@ import SwiftUI
             Button("保留跨小节延音") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
             Button("取消", role: .cancel) { overflow = nil }
         }
-        .alert("重新分析会替换当前主旋律", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("已修改的主旋律将被替换。原始录音仍保留，可以先导出项目包。") }
-        .overlay { if processing { VStack(spacing: 18) { ProgressView(); Text("正在处理本地音频…").font(.subheadline); if analysis != nil { Button("取消分析，保留原录音") { analysis?.cancel(); analysis = nil; processing = false } } }.padding(28).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22)).frame(maxWidth: .infinity, maxHeight: .infinity).background(.black.opacity(0.45)).ignoresSafeArea() } }
+        .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
+        .overlay { if processing { VStack(spacing: 18) { ProgressView(); Text(stage).font(.subheadline); if analysis != nil { Button("取消分析，保留原录音") { analysis?.cancel(); analysis = nil; processing = false } } }.padding(28).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22)).frame(maxWidth: .infinity, maxHeight: .infinity).background(.black.opacity(0.45)).ignoresSafeArea() } }
         .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
         .onDisappear { audio.stopPlayback(); analysis?.cancel(); session.persist() }
+    }
+    private var addTrackSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("为音乐，加一个声部。").font(.title2.weight(.medium)).cascade(0)
+            StartOption(title: "空白音轨", subtitle: "从音符开始，独立写谱", symbol: "music.note.list") { trackChoice = "blank"; addTrack = false }.cascade(1).accessibilityIdentifier("track.addBlank")
+            StartOption(title: "哼唱录制", subtitle: "录下新声部，再自动识谱", symbol: "mic") { trackChoice = "record"; addTrack = false }.cascade(2).accessibilityIdentifier("track.addRecording")
+            StartOption(title: "导入音频或 MIDI", subtitle: "保留原声，成为可编辑音轨", symbol: "square.and.arrow.down") { trackChoice = "import"; addTrack = false }.cascade(3).accessibilityIdentifier("track.addImport")
+        }.padding(24).presentationDetents([.medium, .large]).presentationDragIndicator(.visible).presentationCornerRadius(28)
+    }
+    private func performTrackChoice() {
+        guard let choice = trackChoice else { return }; trackChoice = nil
+        guard let id = createTrack() else { return }
+        if choice == "record" { openRecording(id) }
+        if choice == "import" { importTrackID = id; importer = true }
     }
     private var parameterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 14) {
@@ -94,7 +131,7 @@ import SwiftUI
     private var playbackBar: some View {
         HStack(spacing: 20) {
             Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 44, height: 44) }.accessibilityLabel("回到起点")
-            Button { Task { do { audio.loop = loop; try await audio.play(session.project) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id).frame(width: 50, height: 50).background(Palette.gold, in: Circle()).foregroundStyle(Palette.ink) }.accessibilityLabel("播放或暂停")
+            Button { Task { do { audio.loop = loop; try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id).frame(width: 50, height: 50).background(Palette.gold, in: Circle()).foregroundStyle(Palette.ink) }.accessibilityLabel("播放或暂停")
             Text("第 \(min(session.project.bars, Int(audio.playbackSeconds * session.project.bpm / 240) + 1)) / \(session.project.bars) 小节").font(.caption).foregroundStyle(.secondary)
             Button { loop.toggle(); audio.loop = loop; audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
         }.frame(maxWidth: .infinity).musicCard(radius: 16)
@@ -108,7 +145,7 @@ import SwiftUI
                     Picker("时值", selection: Binding(get: { session.selected?.duration ?? 1 }, set: { changeDuration($0) })) { ForEach([0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4], id: \.self) { Text("\($0, specifier: "%.2f") 拍").tag($0) }; if ![0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].contains(note.duration) { Text("原始时值").tag(note.duration) } }.pickerStyle(.menu)
                 }
                 ScrollView(.horizontal, showsIndicators: false) { HStack {
-                    if session.project.recordingFile != nil { Button("试听原声") { if let url = session.store.recordingURL(session.project) { do { try audio.playOriginal(url, from: note.rawStart ?? note.start * 60 / session.project.bpm, length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } } }.frame(minHeight: 44) }
+                    if session.store.recordingURL(session.project, trackID: session.track.id) != nil { Button("试听原声") { if let url = session.store.recordingURL(session.project, trackID: session.track.id) { do { try audio.playOriginal(url, from: note.rawStart ?? note.start * 60 / session.project.bpm, length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } } }.frame(minHeight: 44) }
                     Button("↑ 八度") { session.editNote { if let m = $0.midi { $0.midi = min(127, m + 12) } } }.frame(minHeight: 44)
                     Button("↓ 八度") { session.editNote { if let m = $0.midi { $0.midi = max(0, m - 12) } } }.frame(minHeight: 44)
                     Button("拆分") { splitNote() }.frame(minHeight: 44)
@@ -120,14 +157,15 @@ import SwiftUI
     }
     private var trackList: some View {
         VStack(spacing: 12) {
-            ForEach(Array(session.project.tracks.enumerated()), id: \.element.id) { index, track in
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack { Button { session.trackIndex = index; session.selectedNote = nil; multiTrack = false } label: { VStack(alignment: .leading, spacing: 5) { Text(track.name).font(.headline); Text(track.instrument.name).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain); Spacer(); Button(role: .destructive) { audio.stopPlayback(); session.edit { $0.tracks.remove(at: index) }; session.trackIndex = min(session.trackIndex, session.project.tracks.count - 1) } label: { Image(systemName: "trash").frame(width: 44, height: 44) }.disabled(session.project.tracks.count == 1) }
-                    HStack { Toggle("静音", isOn: Binding(get: { session.project.tracks[index].muted }, set: { muted in audio.stopPlayback(); session.edit { $0.tracks[index].muted = muted } })).font(.caption); Toggle("独奏", isOn: Binding(get: { session.project.tracks[index].solo }, set: { solo in audio.stopPlayback(); session.edit { $0.tracks[index].solo = solo } })).font(.caption) }
-                    HStack { Image(systemName: "speaker.wave.2"); Slider(value: Binding(get: { session.project.tracks[index].volume }, set: { v in session.project.tracks[index].volume = v }), in: 0...1) { editing in if !editing { session.persist(); audio.stopPlayback() } } }.accessibilityLabel("\(track.name) 音量")
-                    PianoRoll(notes: track.notes, beats: session.project.beats).frame(height: 65)
-                    if let assignment = track.assignment { Text(assignment).font(.caption2).foregroundStyle(.secondary) }
-                }.musicCard(radius: 18)
+            ForEach(session.project.tracks) { track in
+                TrackControlCard(track: track, beats: session.project.beats, professional: rawMode == StudioMode.professional.rawValue,
+                    canDelete: session.project.tracks.count > 1, hasSource: session.store.recordingURL(session.project, trackID: track.id) != nil,
+                    onEdit: { selectTrack(track.id); multiTrack = false },
+                    onUpdate: { replacement in audio.stopPlayback(); session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) { p.tracks[i] = replacement } } },
+                    onDelete: { audio.stopPlayback(); session.edit { $0.tracks.removeAll { $0.id == track.id } }; session.trackIndex = min(session.trackIndex, session.project.tracks.count - 1); session.selectedNote = nil },
+                    onRecord: { requestRecording(track.id) }, onImport: { importTrackID = track.id; importer = true },
+                    onAnalyze: { selectTrack(track.id); reanalyze = true }, onSpeech: { selectTrack(track.id); transcribeSpeech() },
+                    onPlaySource: { playSource(track.id) }, onPlayHistory: { file in do { try audio.playOriginal(session.store.recordingDirectory.appendingPathComponent(file)) } catch { session.store.error = error.localizedDescription } })
             }
         }
     }
@@ -147,7 +185,7 @@ import SwiftUI
     private func applyInstrument(_ instrument: Instrument, _ scope: String, _ start: Int, _ end: Int) {
         audio.stopPlayback(); let t = session.trackIndex, selected = session.selectedNote
         session.edit { p in
-            if scope == "整条轨道" { p.tracks[t].instrument = instrument }
+            if scope == "整条轨道" { p.tracks[t].instrument = instrument; p.tracks[t].useOriginalAudio = false }
             else {
                 let chosen = p.tracks[t].notes.filter { scope == "选中音符" ? $0.id == selected : $0.start >= Double(start - 1) * 4 && $0.start < Double(end) * 4 }
                 guard !chosen.isEmpty else { return }; let ids = Set(chosen.map(\.id)); p.tracks[t].notes.removeAll { ids.contains($0.id) }
@@ -158,20 +196,92 @@ import SwiftUI
     private func exportProject() { do { share = ShareItem(url: try session.store.package(session.project)) } catch { session.store.error = error.localizedDescription } }
     private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
     private func exportWAV() async {
-        processing = true; defer { processing = false }; let p = session.project
-        do { let data = try await Task.detached { try AudioRenderer.wav(p) }.value; let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
+        processing = true; defer { processing = false }; let p = session.project, recordingRoot = session.store.recordingDirectory
+        do { let data = try await Task.detached { try AudioRenderer.wav(p, recordingDirectory: recordingRoot) }.value; let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
     }
     private func analyzeOriginal() {
-        guard let url = session.store.recordingURL(session.project) else { return }; processing = true; let bpm = session.project.bpm, free = session.project.freeRhythm
+        let track = session.track
+        guard let url = session.store.recordingURL(session.project, trackID: track.id) else { return }
+        processing = true; stage = "正在使用 " + RecognitionSettings.load().engine.title + " 识谱…"
+        let bpm = session.project.bpm, free = session.project.freeRhythm
         analysis = Task {
             do {
-                let worker = Task.detached { let data = try AudioController.samples(from: url); return try PitchAnalyzer.analyze(data.samples, sampleRate: data.sampleRate, bpm: bpm, free: free) }
-                let notes = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
-                try Task.checkCancellation(); session.edit { $0.tracks[0].notes = notes }
-            } catch is CancellationError {} catch { session.store.error = error.localizedDescription }
+                let result = try await RecognitionService.analyze(url: url, bpm: bpm, free: free, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity)
+                try Task.checkCancellation()
+                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) {
+                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += track.sourceStartBeat ?? 0; return n }
+                    p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.tracks[i].useOriginalAudio = false
+                } }
+            } catch { if !Task.isCancelled { session.store.error = error.localizedDescription } }
             processing = false; analysis = nil
         }
     }
+    private func selectTrack(_ id: UUID) { if let i = session.project.tracks.firstIndex(where: { $0.id == id }) { session.trackIndex = i; session.selectedNote = nil } }
+    @discardableResult private func createTrack() -> UUID? {
+        guard session.project.tracks.count < 128 else { session.store.error = "一个项目最多支持 128 条音轨。"; return nil }
+        audio.stopPlayback(); let track = MusicTrack(name: "新声部 \(session.project.tracks.count + 1)")
+        session.edit { $0.tracks.append(track) }; selectTrack(track.id); multiTrack = true; return track.id
+    }
+    private func requestRecording(_ id: UUID) {
+        if let track = session.project.tracks.first(where: { $0.id == id }), !track.notes.isEmpty || track.recordingFile != nil { recordConfirmation = id }
+        else { openRecording(id) }
+    }
+    private func openRecording(_ id: UUID) { audio.stopPlayback(); recording = TrackRecordingRoute(id: id, project: session.project) }
+    private func acceptRecording(_ project: MusicProject) { session.edit { $0 = project }; session.selectedNote = nil; multiTrack = true }
+    private func playSource(_ id: UUID) {
+        if let track = session.project.tracks.first(where: { $0.id == id }), let url = session.store.recordingURL(session.project, trackID: id) {
+            do { try audio.playOriginal(url, from: track.trimStart ?? 0, length: track.recordingSeconds.map { max(0, (track.trimEnd ?? $0) - (track.trimStart ?? 0)) }) } catch { session.store.error = error.localizedDescription }
+        }
+    }
+    private func importToTrack(_ url: URL) async {
+        guard let id = importTrackID else { return }; processing = true; stage = "正在检查并保存导入文件…"; audio.stopPlayback()
+        defer { processing = false; importTrackID = nil }
+        let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
+        do {
+            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
+            if ["mid", "midi"].contains(url.pathExtension.lowercased()) {
+                let imported = try MIDI.parse(Data(contentsOf: url)); guard let first = imported.tracks.first else { throw MusicError.invalidMIDI }
+                guard session.project.tracks.count + imported.tracks.count - 1 <= 128 else { throw MusicError.tooLarge }
+                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { let offset = p.tracks[i].sourceStartBeat ?? 0; p.tracks[i].notes += first.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].instrument = first.instrument; p.tracks[i].recognitionSource = "MIDI 导入 · 使用项目节拍" }; p.tracks.append(contentsOf: imported.tracks.dropFirst()) }
+                return
+            }
+            let name = UUID().uuidString + "." + url.pathExtension.lowercased(), target = session.store.recordingDirectory.appendingPathComponent(name)
+            try FileManager.default.copyItem(at: url, to: target)
+            session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
+                if let old = p.tracks[i].recordingFile { p.tracks[i].sourceHistory = (p.tracks[i].sourceHistory ?? []) + [old] }
+                p.tracks[i].recordingFile = name; p.tracks[i].recordingSeconds = nil; p.tracks[i].trimStart = nil; p.tracks[i].trimEnd = nil; p.tracks[i].useOriginalAudio = true
+            } }
+            let decoded = try await Task.detached { try AudioController.samples(from: target) }.value
+            let duration = Double(decoded.samples.count) / decoded.sampleRate
+            session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { p.tracks[i].recordingSeconds = duration } }
+            stage = "原声已保存，正在生成候选乐谱…"
+            do {
+                let result = try await RecognitionService.analyze(url: target, bpm: session.project.bpm, free: true)
+                try Task.checkCancellation()
+                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
+                    let offset = p.tracks[i].sourceStartBeat ?? 0
+                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.freeRhythm = true
+                } }
+            } catch { session.store.error = "原声已保留，可以独立回放、裁剪或手动写谱。识谱未完成：" + error.localizedDescription }
+            selectTrack(id); multiTrack = true
+        } catch { session.store.error = error.localizedDescription }
+    }
+    private func transcribeSpeech() {
+        guard let url = session.store.recordingURL(session.project, trackID: session.track.id) else { return }
+        let settings = RecognitionSettings.load()
+        guard !settings.model.isEmpty, (try? ModelKeychain.read().isEmpty) == false else { modelSettings = true; return }
+        let track = session.track; processing = true; stage = "正在把所选原声发送给你的模型识别文字…"
+        analysis = Task {
+            do {
+                let result = try await RecognitionService.analyze(url: url, bpm: session.project.bpm, free: true, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity, settings: settings, speechOnly: true)
+                try Task.checkCancellation()
+                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) { p.tracks[i].transcript = result.transcript } }
+                if result.transcript?.isEmpty != false { session.store.error = "模型未返回清晰文字。当前音符和原声仍保留。" }
+            } catch { if !Task.isCancelled { session.store.error = error.localizedDescription } }
+            processing = false; analysis = nil
+        }
+    }
+
 }
 
 struct ScoreCanvas: View {

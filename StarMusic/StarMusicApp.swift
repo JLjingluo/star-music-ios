@@ -59,10 +59,8 @@ struct RootView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { if route == nil { MusicTabBar(selection: $tab) } }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
-        .fullScreenCover(item: $route) { route in
-            if route.record { RecordingView(project: route.project, onEdit: { p in self.route = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.route = ProjectRoute(project: p) } }) }
-            else { EditorView(project: route.project, store: store) }
-        }
+        .fullScreenCover(item: $route) { route in ProjectWorkspace(route: route) }
+
         .sheet(isPresented: $help) { HelpView() }
         .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .midi, .json, .data], allowsMultipleSelection: false) { result in
             switch result { case .success(let urls): if let url = urls.first { Task { await importMusic(url) } }; case .failure(let error): store.error = error.localizedDescription }
@@ -80,22 +78,33 @@ struct RootView: View {
         importing = true; defer { importing = false }
         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0; guard size <= 32 * 1024 * 1024 else { throw MusicError.tooLarge }
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0; guard size <= (url.pathExtension.lowercased() == "starmusic" || url.pathExtension.lowercased() == "json" ? 512 : 256) * 1024 * 1024 else { throw MusicError.tooLarge }
             let ext = url.pathExtension.lowercased(); var p: MusicProject
             if ext == "starmusic" || ext == "json" { p = try store.importPackage(Data(contentsOf: url)) }
             else if ext == "mid" || ext == "midi" { p = try MIDI.parse(Data(contentsOf: url)); p.name = url.deletingPathExtension().lastPathComponent; try store.save(p) }
             else {
                 let name = UUID().uuidString + "." + ext, target = store.recordingDirectory.appendingPathComponent(name)
                 try FileManager.default.copyItem(at: url, to: target)
-                p = MusicProject(); p.name = url.deletingPathExtension().lastPathComponent; p.recordingFile = name; p.freeRhythm = true
+                p = MusicProject(); p.name = url.deletingPathExtension().lastPathComponent; p.recordingFile = name; p.tracks[0].recordingFile = name; p.tracks[0].useOriginalAudio = true; p.freeRhythm = true
                 try store.save(p)
                 let result = try await Task.detached { try AudioController.samples(from: target) }.value
-                p.recordingSeconds = Double(result.samples.count) / result.sampleRate
-                do { p.tracks[0].notes = try await Task.detached { try PitchAnalyzer.analyze(result.samples, sampleRate: result.sampleRate, bpm: 96, free: true) }.value }
+                p.recordingSeconds = Double(result.samples.count) / result.sampleRate; p.tracks[0].recordingSeconds = p.recordingSeconds; try store.save(p)
+                do { let recognized = try await RecognitionService.analyze(url: target, bpm: p.bpm, free: true); p.tracks[0].notes = recognized.notes; p.tracks[0].transcript = recognized.transcript; p.tracks[0].recognitionSource = RecognitionSettings.load().engine.title }
                 catch { store.error = "原始音频已保存，可在编辑器中重试分析或手动写谱。" }
                 try store.save(p)
             }
             open(p)
         } catch { store.error = error.localizedDescription }
+    }
+}
+
+struct ProjectWorkspace: View {
+    @EnvironmentObject private var store: ProjectStore
+    var route: ProjectRoute
+    @State private var editing: MusicProject?
+    init(route: ProjectRoute) { self.route = route; _editing = State(initialValue: route.record ? nil : route.project) }
+    var body: some View {
+        if let project = editing { EditorView(project: project, store: store) }
+        else { RecordingView(project: route.project) { project in editing = project } }
     }
 }

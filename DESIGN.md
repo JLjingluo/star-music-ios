@@ -1,4 +1,4 @@
-# Star Music v0.3.1 interaction reference
+# Star Music v0.4.0 interaction reference
 
 All three supplied Xiaohongshu videos were obtained through 33tool.com and reviewed across their full timelines using extracted frames and voice-over transcription. Media stays outside this repository; no creator assets or complete prompt text are reused.
 
@@ -9,3 +9,7 @@ All three supplied Xiaohongshu videos were obtained through 33tool.com and revie
 Home entrance is a finite 65 ms stagger with a small spring rise. Reduce Motion and VoiceOver display content immediately. Essential buttons have at least 44 pt hit regions. Dynamic Type accessibility sizes force one draft column. The system continues to distinguish demo community content and local likes from online services. Delete remains recoverable and requires confirmation.
 
 Native verification: Xcode compilation and the music/storage XCTest suite run in GitHub Actions. Preview captures include dark/light home, the creation sheet, editor and launch motion. Microphone behavior still requires an iPhone; simulator screenshots do not establish device recording quality.
+
+## Native studio expansion
+
+Simple, standard and professional modes retain one project model. Professional controls expose actual per-track source trimming, beat offsets and engine configuration. Original audio and editable notes are distinct playback choices. Track recording/import use explicit creation controls; all analysis failures retain originals. Keychain configuration is separate from musical projects and exports. Model inference, network contracts and preview layouts require native verification.

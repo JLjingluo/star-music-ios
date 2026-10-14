@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/marl/crepe",
+  "weightsURL": "https://raw.githubusercontent.com/marl/crepe/models/model-full.h5.bz2",
+  "capacity": "full",
+  "parameters": 22244328,
+  "weightsSHA256": "b6fd2758b03a8625a16fe86cd474ff0d8f30ad9a05e4bee2244e13e98664f860",
+  "tensorflow": "2.15.1",
+  "coremltools": "8.3.0",
+  "coremlPrecision": "FLOAT16",
+  "samplingRate": 16000,
+  "frameSize": 1024,
+  "outputBins": 360,
+  "license": "MIT",
+  "notice": "CREPE-LICENSE.txt"
+}

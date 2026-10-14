@@ -74,9 +74,10 @@ jobs:
           set -euo pipefail
           TAG="ios-v$APP_VERSION-unsigned-build-$SOURCE_RUN_ID"
           cat > RELEASE-NOTES.md <<'NOTES'
-          原生 Star Music iOS：界面与交互更新。
+          原生 Star Music iOS：三种创作模式、完整 CREPE 离线模型与逐轨创作。
           
-          已实际审阅三段参考视频，完善首页分层入场、按压反馈、搜索展开、连续网格切换及本地喜欢反馈。
+          加入改进 YIN、统一识谱流程、用户自配音频模型与 Keychain 配置；逐轨录唱、导入、原声裁剪和项目包保留历史原声。模型能力仍需实际哼唱校正；未使用用户密钥验证真实云端识谱。
+          首页保持单一底部导航、深浅色及分层启动过渡。
           
           下载 StarMusic-Unsigned.ipa 即可获取应用包，没有额外的 ZIP 包装。
           此包尚未签名，安装到 iPhone 前需要有效的 Apple 签名。
