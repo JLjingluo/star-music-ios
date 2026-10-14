@@ -96,13 +96,15 @@ final class MusicTests: XCTestCase {
     }
     func testYINQuietNotesAndStrongHarmonicsAvoidOctaveErrors() throws {
         for midi in stride(from: 45, through: 81, by: 3) {
+            for thirdAmplitude in [0.0, 0.02] {
             let frequency = 440 * pow(2, Double(midi - 69) / 12)
             let signal = (0..<2048).map { i -> Float in
                 let phase = 2 * Double.pi * frequency * Double(i) / 16000
-                return Float(0.007 * sin(phase) + 0.05 * sin(2 * phase) + 0.02 * sin(3 * phase))
+                return Float(0.007 * sin(phase) + 0.05 * sin(2 * phase) + thirdAmplitude * sin(3 * phase))
             }
             let prediction = try XCTUnwrap(PitchAnalyzer.detect(signal[...], rate: 16000))
             XCTAssertEqual(prediction.midi, midi, "Strong harmonics at MIDI \(midi)")
+            }
         }
     }
     func testVibratoDoesNotFragmentNotesAndSilenceBecomesRest() throws {
@@ -123,6 +125,21 @@ final class MusicTests: XCTestCase {
         let converted = try AudioController.resample(source, from: 44100, to: 16000)
         XCTAssertLessThanOrEqual(abs(converted.count - 16000), 64)
         XCTAssertEqual(PitchAnalyzer.detect(converted[2000..<4048], rate: 16000)?.midi, 69)
+    }
+    func testRecognitionServiceAnalyzesTrimmedFileAndCancellationRetainsOriginal() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let signal = (0..<44100).map { Float(0.2 * sin(2 * Double.pi * 440 * Double($0) / 44100)) }
+        let bytes = AudioRenderer.pcmWAV(signal, rate: 44100); try bytes.write(to: url)
+        var settings = RecognitionSettings(); settings.engine = .neural
+        let result = try await RecognitionService.analyze(url: url, bpm: 120, free: true, start: 0.25, end: 0.75, settings: settings)
+        XCTAssertEqual(result.notes.compactMap(\.midi), [69])
+        XCTAssertEqual(try XCTUnwrap(result.notes.first?.rawStart), 0.25, accuracy: 0.04)
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
+        let task = Task { try await RecognitionService.analyze(url: url, bpm: 120, free: true, settings: settings) }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Cancelled analysis must not produce applied notes") } catch is CancellationError {}
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
     }
     func testCloudEndpointAndCandidateValidation() throws {
         var settings = RecognitionSettings(); settings.baseURL = "https://example.test"

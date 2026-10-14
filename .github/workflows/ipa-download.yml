@@ -63,10 +63,24 @@ jobs:
               magic,cpu=struct.unpack_from('<II',binary)
               assert magic==0xfeedfacf and cpu==0x0100000c, 'Expected an arm64 device binary'
               assert info['DTPlatformName'].lower() == 'iphoneos', 'Expected a device build'
+              assert any(n.startswith('Payload/StarMusic.app/PitchCREPE.mlmodelc/') for n in z.namelist()), 'Compiled full pitch model missing'
+              assert 'Payload/StarMusic.app/CREPE-LICENSE.txt' in z.namelist(), 'Model license missing'
+              assert not any('/_CodeSignature/' in n for n in z.namelist()), 'Expected explicitly unsigned delivery'
           Path('IPA-CHECKSUM.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  StarMusic-Unsigned.ipa\n')
           with open(__import__('os').environ['GITHUB_ENV'],'a') as env:
               env.write('APP_VERSION='+info['CFBundleShortVersionString']+'\n')
           print('Verified genuine arm64 iPhone IPA payload.')
+          PY
+      - name: Preserve actual native interface captures
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          target=Path('previews/ui-release'); target.mkdir(exist_ok=True)
+          for source in Path('previews/ui').rglob('*'):
+              if source.is_file() and source.suffix.lower() in ('.png','.json'):
+                  shutil.copy2(source,target/('UI-'+source.name))
+          print('Native interface capture files:',len(list(target.iterdir())))
           PY
       - name: Attach the IPA directly to a private repository release
         shell: bash
@@ -84,9 +98,11 @@ jobs:
           云端构建包含音乐与存储测试、原生界面流程测试及深浅色预览。录音及系统音频中断行为仍需实机验证。
           仓库保持私有，下载需要有访问权限的 GitHub 登录。
           NOTES
+          UI_ASSETS=()
+          while IFS= read -r -d '' file; do UI_ASSETS+=("$file"); done < <(find previews/ui-release -type f -print0)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 --clobber
+            gh release upload "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 "${UI_ASSETS[@]}" --clobber
           else
-            gh release create "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 --target "$SOURCE_SHA" --title "Star Music iOS v$APP_VERSION · Unsigned IPA" --notes-file RELEASE-NOTES.md
+            gh release create "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 "${UI_ASSETS[@]}" --target "$SOURCE_SHA" --title "Star Music iOS v$APP_VERSION · Unsigned IPA" --notes-file RELEASE-NOTES.md
           fi
           gh release view "$TAG" --json url,assets

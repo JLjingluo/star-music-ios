@@ -27,13 +27,21 @@ enum PitchAnalyzer {
         for lag in minimum..<maximum where normalized[lag] < 0.14 && normalized[lag] <= normalized[lag - 1] && normalized[lag] < normalized[lag + 1] { selected = lag; break }
         if selected == 0 { selected = (minimum...maximum).min(by: { normalized[$0] < normalized[$1] }) ?? 0 }
         guard selected > 0, normalized[selected] < 0.3 else { return nil }
+        func interpolatedDifference(_ lag: Int) -> Double {
+            let left = normalized[max(0, lag - 1)], middle = normalized[lag], right = normalized[min(maximum, lag + 1)]
+            let curvature = left + right - 2 * middle
+            guard curvature > 0 else { return middle }
+            return max(0, middle - pow(right - left, 2) / (8 * curvature))
+        }
         // A substantially better whole-period minimum resolves a weak fundamental / strong second harmonic.
+        // Compare interpolated minima: integer-lag error at high pitches is not evidence for a subharmonic.
         let initial = selected
         for multiple in 2...3 {
             let target = initial * multiple
             guard target < maximum - 2 else { continue }
             let candidate = (max(minimum, target - 3)...min(maximum, target + 3)).min(by: { normalized[$0] < normalized[$1] }) ?? selected
-            if normalized[candidate] < normalized[selected] * 0.35 && normalized[selected] - normalized[candidate] > 0.01 { selected = candidate }
+            let currentError = interpolatedDifference(selected), candidateError = interpolatedDifference(candidate)
+            if candidateError < currentError * 0.35 && currentError - candidateError > 0.01 { selected = candidate }
         }
         let left = normalized[max(0, selected - 1)], middle = normalized[selected], right = normalized[min(maximum, selected + 1)]
         let denominator = 2 * (left + right - 2 * middle)
