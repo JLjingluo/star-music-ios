@@ -25,36 +25,69 @@ struct MelodyCanvas: View {
     var onSelect: (UUID) -> Void
     var onAdd: (Int, Double) -> Void
     var onMove: (UUID, Int) -> Void
-    private var low: Int { max(0, (notes.compactMap(\.midi).min() ?? 60) - 3) }
-    private var high: Int { min(127, max(low + 12, (notes.compactMap(\.midi).max() ?? 72) + 3)) }
-    private var width: CGFloat { max(310, CGFloat(beats) * 38) }
+    @State private var low = 48
+    @State private var high = 84
+    private var span: Double { max(4, beats) }
+    private var width: CGFloat { max(310, CGFloat(span) * 38) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Text("旋律高低").font(.subheadline.weight(.medium)); Spacer(); Text("从左往右听").font(.caption).foregroundStyle(.secondary) }
             HStack(spacing: 8) {
                 VStack { Text("高"); Spacer(); Text("低") }.font(.caption2).foregroundStyle(.secondary).frame(height: 160)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    ZStack(alignment: .topLeading) {
-                        Canvas { context, size in
-                            for row in 0...4 { let y = CGFloat(row) * 40; var line = Path(); line.move(to: CGPoint(x: 0, y: y)); line.addLine(to: CGPoint(x: size.width, y: y)); context.stroke(line, with: .color(.gray.opacity(0.15)), lineWidth: 1) }
-                        }
-                        if notes.isEmpty { Text(addMode ? "轻点这里，写下一个声音" : "录唱后，旋律会出现在这里").font(.caption).foregroundStyle(.secondary).frame(width: 290, height: 160) }
-                        ForEach(notes.filter { $0.midi != nil }) { note in
-                            let x = CGFloat(note.start / max(4, beats)) * width
-                            let y = CGFloat(Double(high - (note.midi ?? low)) / Double(max(1, high - low))) * 140 + 10
-                            Button { onSelect(note.id) } label: {
-                                Capsule().fill(note.id == selected ? Palette.gold : Palette.gold.opacity(0.55)).frame(width: max(12, CGFloat(note.duration / max(4, beats)) * width - 3), height: 12)
-                                    .overlay(Capsule().stroke(note.confidence < 0.8 ? Color.primary.opacity(0.5) : .clear, style: StrokeStyle(lineWidth: 1, dash: [3])))
-                                    .frame(height: 44)
-                            }.buttonStyle(.plain).position(x: x + max(12, CGFloat(note.duration / max(4, beats)) * width - 3) / 2, y: y)
-                                .accessibilityLabel("旋律片段，\(note.confidence < 0.8 ? "建议校正" : "可编辑")")
-                                .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in onMove(note.id, Int((-value.translation.height / 140 * CGFloat(high - low)).rounded())) })
-                        }
-                    }.frame(width: width, height: 170)
-                        .contentShape(Rectangle()).onTapGesture { point in if addMode { let pitch = max(0, min(127, high - Int((point.y - 10) / 140 * CGFloat(high - low)))); onAdd(pitch, max(0, point.x / width * max(4, beats))) } }
-                }
+                ScrollView(.horizontal, showsIndicators: false) { plot }
             }
-        }.musicCard(radius: 20).accessibilityIdentifier("editor.melody")
+        }.musicCard(radius: 20).accessibilityElement(children: .contain).accessibilityIdentifier("editor.melody")
+            .onAppear { fit(initial: true) }.onChange(of: notes) { _, _ in fit(initial: false) }
+    }
+    private var plot: some View {
+        ZStack(alignment: .topLeading) {
+            grid
+            if notes.isEmpty { Text(addMode ? "轻点这里，写下一个声音" : "录唱后，旋律会出现在这里").font(.caption).foregroundStyle(.secondary).frame(width: 290, height: 160) }
+            ForEach(notes.filter { $0.midi != nil }) { note in noteCell(note) }
+        }.frame(width: width, height: 170).contentShape(Rectangle()).onTapGesture { point in addAt(point) }
+    }
+    private var grid: some View {
+        Canvas { context, size in
+            for row in 0...4 {
+                let y = CGFloat(row) * 40
+                var line = Path(); line.move(to: CGPoint(x: 0, y: y)); line.addLine(to: CGPoint(x: size.width, y: y))
+                context.stroke(line, with: .color(.gray.opacity(0.15)), lineWidth: 1)
+            }
+        }
+    }
+    private func noteFrame(_ note: MusicNote) -> CGRect {
+        let x = CGFloat(note.start / span) * width
+        let y = CGFloat(Double(high - (note.midi ?? low)) / Double(max(1, high - low))) * 140 + 10
+        let length = max(CGFloat(12), CGFloat(note.duration / span) * width - 3)
+        return CGRect(x: x, y: y - 22, width: length, height: 44)
+    }
+    private func noteCell(_ note: MusicNote) -> some View {
+        let frame = noteFrame(note)
+        let color = note.id == selected ? Palette.gold : Palette.gold.opacity(0.55)
+        let border = note.confidence < 0.8 ? Color.primary.opacity(0.5) : Color.clear
+        return Button { onSelect(note.id) } label: {
+            Capsule().fill(color).frame(width: frame.width, height: 12)
+                .overlay(Capsule().stroke(border, style: StrokeStyle(lineWidth: 1, dash: [3])))
+                .frame(height: 44)
+        }.buttonStyle(.plain).position(x: frame.midX, y: frame.midY)
+            .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑")
+            .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in
+                let steps = Int((-Double(value.translation.height) / 140 * Double(high - low)).rounded())
+                onMove(note.id, steps)
+            })
+    }
+    private func addAt(_ point: CGPoint) {
+        guard addMode, !notes.contains(where: { $0.midi != nil && noteFrame($0).contains(point) }) else { return }
+        let pitch = max(0, min(127, high - Int(Double(point.y - 10) / 140 * Double(high - low))))
+        onAdd(pitch, max(0, Double(point.x / width) * span))
+    }
+    private func fit(initial: Bool) {
+        let pitches = notes.compactMap(\.midi)
+        guard let minimum = pitches.min(), let maximum = pitches.max() else { return }
+        let lower = max(0, Int(floor(Double(minimum) / 12)) * 12 - 3)
+        let upper = min(127, max(lower + 12, Int(ceil(Double(maximum) / 12)) * 12 + 3))
+        if initial { low = lower; high = upper }
+        else { if minimum < low { low = lower }; if maximum > high { high = upper } }
     }
 }
 
