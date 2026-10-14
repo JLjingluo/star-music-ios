@@ -42,7 +42,7 @@ import SwiftUI
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() } else if RecognitionSettings.load().engine == .cloud { Text("主动识别会把录音发送到你配置的模型服务。").font(.caption).foregroundStyle(.secondary) }
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
-                        if beat { Stepper("\(Int(project.bpm)) BPM", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
+                        if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
                         Button { Task { await begin() } } label: { Circle().fill(Color(red: 0.88, green: 0.57, blue: 0.53)).frame(width: 64, height: 64).padding(8).overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1)) }.accessibilityLabel("开始录音")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {

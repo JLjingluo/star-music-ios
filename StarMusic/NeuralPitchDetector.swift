@@ -19,6 +19,9 @@ final class NeuralPitchDetector {
         return (first.midi, first.confidence)
     }
     func candidates(_ samples: ArraySlice<Float>) throws -> [PitchCandidate] {
+        try autoreleasepool { try infer(samples) }
+    }
+    private func infer(_ samples: ArraySlice<Float>) throws -> [PitchCandidate] {
         guard samples.count == 1024 else { return [] }
         let data = Array(samples), mean = data.reduce(0.0) { $0 + Double($1) } / 1024
         let variance = data.reduce(0.0) { $0 + pow(Double($1) - mean, 2) } / 1024

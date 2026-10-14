@@ -98,7 +98,7 @@ final class InteractionTests: XCTestCase {
         let app = launch()
         app.buttons["home.start"].tap(); app.buttons["start.blank"].tap()
         XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 8))
-        app.buttons["studio.modeMenu"].tap(); app.buttons["普通模式"].tap()
+        app.buttons["studio.modeMenu"].tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "普通模式", "studio.modeMenu")).firstMatch.tap()
         XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "BPM")).firstMatch.exists)
         app.buttons["editor.addNote"].tap()
@@ -116,7 +116,7 @@ final class InteractionTests: XCTestCase {
         capture("Melody-Simple")
         app.buttons["展开更多工具"].tap()
         XCTAssertTrue(app.buttons["editor.addTrack"].exists)
-        app.swipeDown(); app.buttons["studio.modeMenu"].tap(); app.buttons["普通模式"].tap()
+        app.swipeDown(); app.buttons["studio.modeMenu"].tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "普通模式", "studio.modeMenu")).firstMatch.tap()
         capture("Melody-Standard")
     }
 

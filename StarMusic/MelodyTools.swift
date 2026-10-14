@@ -68,7 +68,7 @@ struct MelodyCanvas: View {
         return Button { onSelect(note.id) } label: {
             Capsule().fill(color).frame(width: frame.width, height: 12)
                 .overlay(Capsule().stroke(border, style: StrokeStyle(lineWidth: 1, dash: [3])))
-                .frame(height: 44)
+                .frame(width: max(44, frame.width), height: 44)
         }.buttonStyle(.plain).position(x: frame.midX, y: frame.midY)
             .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑")
             .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in
@@ -77,7 +77,7 @@ struct MelodyCanvas: View {
             })
     }
     private func addAt(_ point: CGPoint) {
-        guard addMode, !notes.contains(where: { $0.midi != nil && noteFrame($0).contains(point) }) else { return }
+        guard addMode, !notes.contains(where: { $0.midi != nil && noteFrame($0).insetBy(dx: -max(0, (44 - noteFrame($0).width) / 2), dy: 0).contains(point) }) else { return }
         let pitch = max(0, min(127, high - Int(Double(point.y - 10) / 140 * Double(high - low))))
         onAdd(pitch, max(0, Double(point.x / width) * span))
     }
@@ -108,6 +108,7 @@ struct KeyShiftSheet: View {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("找到更舒服的高度。").font(.title2.weight(.medium))
                     Text("整首旋律一起升高或降低，前后顺序和节奏保持不变。原始录音保留，试听使用乐器演奏。").font(.subheadline).foregroundStyle(.secondary)
+                    if project.tracks.contains(where: { $0.useOriginalAudio == true && !$0.muted && $0.notes.allSatisfy({ $0.midi == nil }) }) { Text("有一部分只有录音，还没有整理成旋律。这部分保持原来的高度。").font(.caption).foregroundStyle(.secondary) }
                     HStack {
                         Button { steps = max(-24, steps - 1); audio.stopPlayback() } label: { Label("低一点", systemImage: "minus").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("key.lower")
                         Button { steps = min(24, steps + 1); audio.stopPlayback() } label: { Label("高一点", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("key.higher")

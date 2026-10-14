@@ -293,7 +293,7 @@ final class MusicTests: XCTestCase {
         let bundle = Bundle(for: MusicTests.self)
         let manifestURL = try XCTUnwrap(bundle.url(forResource: "humtrans-cases", withExtension: "json"), "Prepare benchmark resources before XcodeGen")
         let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
-        var report: [[String: Any]] = []; var oldCorrect = 0, newCorrect = 0, total = 0
+        var report: [[String: Any]] = []; var oldCorrect = 0, newCorrect = 0, oldChroma = 0, newChroma = 0, oldEdits = 0, newEdits = 0, total = 0
         for item in manifest.cases {
             let audioURL = try XCTUnwrap(bundle.url(forResource: item.audio, withExtension: nil))
             let midiURL = try XCTUnwrap(bundle.url(forResource: item.midi, withExtension: nil))
@@ -305,22 +305,38 @@ final class MusicTests: XCTestCase {
             let current = try PitchAnalyzer.analyze(samples, sampleRate: 16000, bpm: truth.bpm, free: true, engine: .neural)
             let reference = truth.tracks.flatMap(\.notes).filter { $0.midi != nil }
             func pitch(_ notes: [MusicNote], _ time: Double) -> Int? { notes.first { ($0.rawStart ?? $0.start * 60 / truth.bpm) <= time && ($0.rawStart ?? $0.start * 60 / truth.bpm) + ($0.rawDuration ?? $0.duration * 60 / truth.bpm) > time }?.midi }
-            var before = 0, after = 0, count = 0
+            var before = 0, after = 0, beforeChroma = 0, afterChroma = 0, count = 0
             for frame in 0..<300 {
                 let time = Double(frame) * 0.02
                 guard let expected = pitch(reference, time) else { continue }
-                count += 1; if pitch(baseline, time) == expected { before += 1 }; if pitch(current, time) == expected { after += 1 }
+                count += 1
+                if let value = pitch(baseline, time) { if value == expected { before += 1 }; if value % 12 == expected % 12 { beforeChroma += 1 } }
+                if let value = pitch(current, time) { if value == expected { after += 1 }; if value % 12 == expected % 12 { afterChroma += 1 } }
             }
-            oldCorrect += before; newCorrect += after; total += count
-            report.append(["key": item.key,"voicedReferenceFrames":count,"baselineCorrect":before,"currentCorrect":after,"baselineNotes":baseline.filter { $0.midi != nil }.count,"currentNotes":current.filter { $0.midi != nil }.count])
+            let expectedSequence = reference.filter { $0.start * 60 / truth.bpm < 6 }.sorted { $0.start < $1.start }.compactMap { $0.midi.map { $0 % 12 } }
+            func editDistance(_ predicted: [MusicNote]) -> Int {
+                let sequence = predicted.compactMap { $0.midi.map { $0 % 12 } }
+                var row = Array(0...expectedSequence.count)
+                for (i, value) in sequence.enumerated() {
+                    var next = [i + 1] + Array(repeating: 0, count: expectedSequence.count)
+                    for j in expectedSequence.indices { next[j + 1] = min(row[j + 1] + 1, min(next[j] + 1, row[j] + (value == expectedSequence[j] ? 0 : 1))) }
+                    row = next
+                }
+                return row.last ?? 0
+            }
+            let beforeEdits = editDistance(baseline), afterEdits = editDistance(current)
+            oldCorrect += before; newCorrect += after; oldChroma += beforeChroma; newChroma += afterChroma; oldEdits += beforeEdits; newEdits += afterEdits; total += count
+            report.append(["key": item.key,"voicedReferenceFrames":count,"baselineCorrect":before,"currentCorrect":after,"baselinePitchClassCorrect":beforeChroma,"currentPitchClassCorrect":afterChroma,"baselineSequenceEdits":beforeEdits,"currentSequenceEdits":afterEdits,"baselineNotes":baseline.filter { $0.midi != nil }.count,"currentNotes":current.filter { $0.midi != nil }.count])
         }
         XCTAssertGreaterThan(total, 100)
         // This is a regression comparison on a fixed four-recording subset, not an industry ranking.
-        XCTAssertGreaterThanOrEqual(Double(newCorrect) / Double(total), Double(oldCorrect) / Double(total))
-        let json: [String: Any] = ["dataset":"HumTrans validation, fixed four singers, first 6 seconds each","source":"https://github.com/shansongliu/HumTrans","baseline":"v0.4.0 max-bin and local segmentation","current":"candidate sequence and energy segmentation","baselinePitchAccuracy":Double(oldCorrect) / Double(total),"currentPitchAccuracy":Double(newCorrect) / Double(total),"referenceVoicedFrames":total,"cases":report,"limits":"Small validation subset; no claim of parity with commercial products. Annotation timing can affect scores."]
+        XCTAssertGreaterThanOrEqual(newCorrect, oldCorrect)
+        XCTAssertLessThanOrEqual(newEdits, oldEdits)
+        let json: [String: Any] = ["dataset":"HumTrans validation, fixed four singers, first 6 seconds each","source":"https://github.com/shansongliu/HumTrans","baseline":"v0.4.0 max-bin and local segmentation","current":"candidate sequence and energy segmentation","baselinePitchAccuracy":Double(oldCorrect) / Double(total),"currentPitchAccuracy":Double(newCorrect) / Double(total),"baselinePitchClassAccuracy":Double(oldChroma) / Double(total),"currentPitchClassAccuracy":Double(newChroma) / Double(total),"baselineSequenceEdits":oldEdits,"currentSequenceEdits":newEdits,"referenceVoicedFrames":total,"cases":report,"limits":"Small validation subset; no claim of parity with commercial products. Annotation timing can affect scores."]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted,.sortedKeys]), uniformTypeIdentifier: "public.json")
         attachment.name = "Humming-Accuracy"; attachment.lifetime = .keepAlways; add(attachment)
-        print("HUMMING_BENCHMARK baseline=\(oldCorrect)/\(total) current=\(newCorrect)/\(total)")
+        print("HUMMING_BENCHMARK baseline=\(oldCorrect)/\(total) current=\(newCorrect)/\(total) pitchClass=\(oldChroma)->\(newChroma) sequenceEdits=\(oldEdits)->\(newEdits)")
+        for item in report { print("HUMMING_CASE \(item)") }
     }
 
 }

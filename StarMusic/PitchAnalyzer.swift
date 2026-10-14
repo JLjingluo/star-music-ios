@@ -58,6 +58,11 @@ enum PitchAnalyzer {
         var midi: Double?
         var confidence: Double
     }
+    private struct ActiveNote {
+        var midi: Int; var start: Double; var end: Double; var confidence: Double
+        var observations: [PitchCandidate]
+        var separate: Bool
+    }
     static func analyze(_ data: [Float], sampleRate: Double, bpm: Double, free: Bool, engine: RecognitionEngine = .yin) throws -> [MusicNote] {
         guard data.count >= 512, sampleRate.isFinite, sampleRate > 0, bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.noNotes }
         let neural = engine == .neural ? try NeuralPitchDetector() : nil
@@ -78,13 +83,17 @@ enum PitchAnalyzer {
                     candidates = try neural.candidates(window)
                     let yinSize = max(1024, Int(sampleRate * 0.096)), yinHalf = yinSize / 2
                     let a = max(0, i - yinHalf), b = min(data.count, i + yinHalf)
-                    if let yin = estimate(data[a..<b], rate: sampleRate), yin.confidence > 0.85 {
+                    let periodic = estimate(data[a..<b], rate: sampleRate)
+                    if let yin = periodic, yin.confidence > 0.85 {
+                        let octaveDisagreement = candidates.first.map { abs(abs($0.midi - yin.midi) - 12) < 0.4 && yin.confidence > 0.95 } ?? false
                         if let match = candidates.firstIndex(where: { abs($0.midi - yin.midi) < 0.65 }) {
-                            candidates[match].confidence = min(0.99, candidates[match].confidence + 0.12)
-                        } else if (candidates.first?.confidence ?? 0) < 0.65 {
+                            let supported = octaveDisagreement ? max(candidates[match].confidence, yin.confidence * 0.55) : candidates[match].confidence + 0.12
+                            candidates[match].confidence = min(0.99, supported)
+                        } else if (candidates.first?.confidence ?? 0) < 0.65 || octaveDisagreement {
                             candidates.append(PitchCandidate(midi: yin.midi, confidence: yin.confidence * 0.55))
                         }
-                    }
+                    } else if (candidates.first?.confidence ?? 0) < 0.75 { candidates = [] }
+
                 } else if let pitch = estimate(window, rate: sampleRate) {
                     candidates = [PitchCandidate(midi: pitch.midi, confidence: pitch.confidence)]
                 }
@@ -113,12 +122,26 @@ enum PitchAnalyzer {
             }
         }
         var result: [MusicNote] = []
-        var active: (midi: Int, start: Double, end: Double, confidence: Double)?
+        var active: ActiveNote?
         var pending: (midi: Int, start: Double, confidence: Double, count: Int)?
         func flush() {
             guard let note = active, note.end - note.start >= 0.06 else { return }
             let start = note.start * bpm / 60, duration = (note.end - note.start) * bpm / 60
-            result.append(MusicNote(midi: note.midi, start: free ? start : (start * 4).rounded() / 4, duration: free ? duration : max(0.25, (duration * 4).rounded() / 4), confidence: note.confidence, rawStart: note.start, rawDuration: note.end - note.start))
+            let observations = note.observations.sorted { $0.midi < $1.midi }
+            let weight = observations.reduce(0.0) { $0 + $1.confidence }
+            var cumulative = 0.0, pitch = Double(note.midi)
+            for observation in observations { cumulative += observation.confidence; if cumulative >= weight / 2 { pitch = observation.midi; break } }
+            let rounded = Int(pitch.rounded())
+            if !note.separate, let previous = result.last, previous.midi == rounded,
+               abs(note.start - (previous.rawStart ?? 0) - (previous.rawDuration ?? 0)) < 0.025 {
+                let index = result.count - 1
+                let mergedBeats = (note.end * bpm / 60) - previous.start
+                result[index].duration = free ? mergedBeats : max(0.25, (mergedBeats * 4).rounded() / 4)
+                result[index].rawDuration = note.end - (previous.rawStart ?? note.start)
+                result[index].confidence = min(previous.confidence, note.confidence)
+            } else {
+                result.append(MusicNote(midi: rounded, start: free ? start : (start * 4).rounded() / 4, duration: free ? duration : max(0.25, (duration * 4).rounded() / 4), confidence: note.confidence, rawStart: note.start, rawDuration: note.end - note.start))
+            }
         }
         for (index, frame) in frames.enumerated() {
             let end = min(total, frame.time + Double(hop) / sampleRate)
@@ -129,16 +152,16 @@ enum PitchAnalyzer {
                    measurements[index - 1].energy < measurements[index - 2].energy * 0.40,
                    measurements[index].energy > measurements[index - 1].energy * 2 {
                     active?.end = frames[index - 1].time; flush()
-                    active = (midi, frames[index - 1].time, end, frame.confidence); pending = nil; continue
+                    active = ActiveNote(midi: midi, start: frames[index - 1].time, end: end, confidence: frame.confidence, observations: [PitchCandidate(midi: pitch, confidence: frame.confidence)], separate: true); pending = nil; continue
                 }
-                active?.end = end; active?.confidence = min(note.confidence, frame.confidence); pending = nil
+                active?.end = end; active?.confidence = min(note.confidence, frame.confidence); active?.observations.append(PitchCandidate(midi: pitch, confidence: frame.confidence)); pending = nil
             } else if active == nil {
-                active = (midi, frame.time, end, frame.confidence); pending = nil
+                active = ActiveNote(midi: midi, start: frame.time, end: end, confidence: frame.confidence, observations: [PitchCandidate(midi: pitch, confidence: frame.confidence)], separate: true); pending = nil
             } else {
                 if var candidate = pending, candidate.midi == midi { candidate.count += 1; candidate.confidence = min(candidate.confidence, frame.confidence); pending = candidate }
                 else { pending = (midi, frame.time, frame.confidence, 1) }
                 if let candidate = pending, candidate.count >= 2 {
-                    active?.end = candidate.start; flush(); active = (candidate.midi, candidate.start, end, candidate.confidence); pending = nil
+                    active?.end = candidate.start; flush(); active = ActiveNote(midi: candidate.midi, start: candidate.start, end: end, confidence: candidate.confidence, observations: [PitchCandidate(midi: pitch, confidence: frame.confidence)], separate: false); pending = nil
                 }
             }
         }
