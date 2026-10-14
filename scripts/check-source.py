@@ -17,8 +17,9 @@ assert 'NSMicrophoneUsageDescription' in plistlib.loads((root/'StarMusic/Info.pl
 project=yaml.safe_load((root/'project.yml').read_text());assert set(project['targets'])=={'StarMusic','StarMusicTests'}
 for p in (root/'.github/workflows').glob('*.yml'):
     workflow=yaml.load(p.read_text(),Loader=yaml.BaseLoader)
-    assert 'on' in workflow and workflow['permissions']=={'contents':'read'}
-    assert all(job['runs-on'].startswith('macos-') for job in workflow['jobs'].values())
+    expected_permissions={'contents':'write','actions':'read'} if p.name=='ipa-download.yml' else {'contents':'read'}
+    assert 'on' in workflow and workflow['permissions']==expected_permissions
+    assert all(job['runs-on'].startswith(('macos-','ubuntu-')) for job in workflow['jobs'].values())
 image=Image.open(root/'StarMusic/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
 assert image.size==(1024,1024)
 if image.mode=='RGBA':assert image.getchannel('A').getextrema()==(255,255)
@@ -33,5 +34,5 @@ assert not list(root.rglob('*.p12')) and not list(root.rglob('*.mobileprovision'
 for p in root.rglob('*'):
     if '.git' not in p.relative_to(root).parts and p.is_file() and p.suffix not in {'.png','.zip'}:
         assert not re.search(r'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}',p.read_text()),f'Credential-like value in {p}'
-print(f'PASS: {len(source)} Swift syntax trees; parsed Xcode project and shared scheme; XcodeGen targets; 2 macOS workflows; Info/privacy plists; opaque 1024px app icon; no signing/token files.')
+print(f'PASS: {len(source)} Swift syntax trees; parsed Xcode project and shared scheme; XcodeGen targets; GitHub workflows; Info/privacy plists; opaque 1024px app icon; no signing/token files.')
 print('Xcode compilation, XCTest execution and device behavior are NOT verified by this check.')
