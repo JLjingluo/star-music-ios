@@ -260,10 +260,10 @@ struct DraftsView: View {
                 withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86)) { searchExpanded.toggle() }
                 searchFocused = searchExpanded
                 if !searchExpanded { search = "" }
-            } label: { Image(systemName: searchExpanded ? "xmark" : "magnifyingglass").contentTransition(.symbolEffect(.replace)).frame(width: 44, height: 44) }
+            } label: { Image(systemName: searchExpanded ? "xmark" : "magnifyingglass").contentTransition(reduceMotion ? .identity : .symbolEffect(.replace)).frame(width: 44, height: 44) }
                 .buttonStyle(MusicPressStyle()).accessibilityLabel(searchExpanded ? "关闭搜索" : "搜索草稿").accessibilityIdentifier("drafts.searchToggle")
             if searchExpanded {
-                TextField("搜索你的旋律", text: $search).focused($searchFocused).submitLabel(.search)
+                TextField("搜索你的旋律", text: $search).focused($searchFocused).submitLabel(.search).onAppear { searchFocused = true }
                     .onSubmit { searchFocused = false }.accessibilityIdentifier("drafts.searchField")
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
                 if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44) }.accessibilityLabel("清空搜索") }

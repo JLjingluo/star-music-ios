@@ -58,7 +58,7 @@ struct RootView: View {
             NavigationStack { ProfileView(onOpen: open) }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(3)
         }
         .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { MusicTabBar(selection: $tab) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { if route == nil { MusicTabBar(selection: $tab) } }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
         .fullScreenCover(item: $route) { route in
             if route.record { RecordingView(project: route.project, onEdit: { p in self.route = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.route = ProjectRoute(project: p) } }) }
