@@ -20,7 +20,7 @@
 
 本轮代码附带模型推理、YIN 谐波/颤音分段、重采样、云端请求与失败处理、多轨原声复制/项目包迁移、共享音频时间线、撤销以及原生 UI 流程测试。必须以当前提交的 GitHub Actions 结果为准；源码语法检查不代表 Xcode 编译通过。
 
-历史 v0.3.1 已完成 Xcode 构建。v0.4.0 的实际编译、测试、原生截图和原始 IPA 由本轮工作流生成，发布前核对。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
+v0.4.0 build 5 已实际通过 macOS 15 / Xcode 16.4 编译、20 项 XCTest 与 4 项原生界面测试，Release 模拟器和 arm64 iPhoneOS 构建均成功。已下载核验原始 IPA、完整编译模型、无签名状态及校验值，并逐帧检查启动过渡、深浅色首页、模式和模型设置页。详见 [原生验证记录](NATIVE-VERIFICATION.md)。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
 
 私有仓库：https://github.com/JLjingluo/star-music-ios 。Direct IPA Download 工作流在成功构建后直接发布 `.ipa`，没有额外 ZIP 包装。未签名包需有效 Apple 签名才能安装。
 
@@ -94,3 +94,9 @@ base64 -i StarMusic.mobileprovision | tr -d '\n' | pbcopy
 
 把令牌配置到任务环境的安全凭据输入中；不要发送到聊天、源码或仓库。已经贴到聊天的令牌应立即撤销。连接所授予的权限不一定包含上传代码或触发 Actions，需以实际验证为准。
 
+
+## 本轮 IPA 直链
+
+[直接下载 v0.4.0 build 5 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.4.0-unsigned-build-38608702962/StarMusic-Unsigned.ipa)（42,268,081 字节，无额外 ZIP）。
+
+未签名；安装前需要有效的 Apple 签名。私有仓库下载需要有访问权限的 GitHub 登录。
