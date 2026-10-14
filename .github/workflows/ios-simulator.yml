@@ -2,7 +2,7 @@ name: iOS Build and Test
 on:
   push:
     branches: [main]
-    paths: ['StarMusic/**', 'StarMusicTests/**', 'project.yml', 'scripts/**', '.github/workflows/ios-simulator.yml']
+    paths: ['StarMusic/**', 'StarMusicTests/**', 'StarMusicUITests/**', 'project.yml', 'scripts/**', '.github/workflows/ios-simulator.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,11 +25,18 @@ jobs:
         run: |
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
           xcodegen generate
-      - name: Run music and storage tests
+      - name: Run music, storage and interface tests
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')
           printf 'SIMULATOR_ID=%s\n' "$DEVICE_ID" >> "$GITHUB_ENV"
-          xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO
+          xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO
+      - name: Export interface screenshots
+        if: always()
+        run: |
+          mkdir -p artifacts/ui
+          if [ -d build/TestResults.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/TestResults.xcresult --output-path artifacts/ui
+          fi
       - name: Build simulator app
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO
@@ -40,9 +47,20 @@ jobs:
         run: |
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
           xcrun simctl install "$SIMULATOR_ID" build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app
-          xcrun simctl launch "$SIMULATOR_ID" music.star.starmusic
+          xcrun simctl terminate "$SIMULATOR_ID" music.star.starmusic || true
+          xcrun simctl status_bar "$SIMULATOR_ID" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+          xcrun simctl io "$SIMULATOR_ID" recordVideo --codec=h264 artifacts/StarMusic-Entrance.mp4 &
+          CAPTURE_PID=$!
+          sleep 1
+          xcrun simctl launch "$SIMULATOR_ID" music.star.starmusic -appearance dark
           sleep 3
           xcrun simctl io "$SIMULATOR_ID" screenshot artifacts/StarMusic-Home.png
+          kill -INT "$CAPTURE_PID"
+          wait "$CAPTURE_PID"
+          xcrun simctl terminate "$SIMULATOR_ID" music.star.starmusic
+          xcrun simctl launch "$SIMULATOR_ID" music.star.starmusic -appearance light
+          sleep 2
+          xcrun simctl io "$SIMULATOR_ID" screenshot artifacts/StarMusic-Home-Light.png
       - name: Build unsigned device IPA
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
@@ -63,7 +81,9 @@ jobs:
           name: StarMusic-Simulator
           path: |
             artifacts/StarMusic-Simulator.zip
-            artifacts/StarMusic-Home.png
+            artifacts/StarMusic-Home*.png
+            artifacts/StarMusic-Entrance.mp4
+            artifacts/ui
             artifacts/README.md
           retention-days: 14
       - name: Upload test results

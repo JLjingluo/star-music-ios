@@ -6,7 +6,6 @@ on:
         description: '成功的 iOS 构建 Run ID'
         required: true
         type: string
-        default: '38422764650'
 permissions:
   contents: write
   actions: read
@@ -43,6 +42,13 @@ jobs:
           path: delivery
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
+      - name: Retrieve native previews
+        uses: actions/download-artifact@v4
+        with:
+          name: StarMusic-Simulator
+          path: previews
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Verify actual IPA contents
         run: |
           python3 - <<'PY'
@@ -58,24 +64,28 @@ jobs:
               assert magic==0xfeedfacf and cpu==0x0100000c, 'Expected an arm64 device binary'
               assert info['DTPlatformName'].lower() == 'iphoneos', 'Expected a device build'
           Path('IPA-CHECKSUM.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  StarMusic-Unsigned.ipa\n')
+          with open(__import__('os').environ['GITHUB_ENV'],'a') as env:
+              env.write('APP_VERSION='+info['CFBundleShortVersionString']+'\n')
           print('Verified genuine arm64 iPhone IPA payload.')
           PY
       - name: Attach the IPA directly to a private repository release
         shell: bash
         run: |
           set -euo pipefail
-          TAG="ios-v0.3.0-unsigned-build-$SOURCE_RUN_ID"
+          TAG="ios-v$APP_VERSION-unsigned-build-$SOURCE_RUN_ID"
           cat > RELEASE-NOTES.md <<'NOTES'
-          原生 Star Music iOS v0.3 第一阶段。
+          原生 Star Music iOS：界面与交互更新。
+          
+          已实际审阅三段参考视频，完善首页分层入场、按压反馈、搜索展开、连续网格切换及本地喜欢反馈。
           
           下载 StarMusic-Unsigned.ipa 即可获取应用包，没有额外的 ZIP 包装。
           此包尚未签名，安装到 iPhone 前需要有效的 Apple 签名。
-          原始云端构建通过 9 项 XCTest；录音及系统音频中断行为仍需实机验证。
+          云端构建包含音乐与存储测试、原生界面流程测试及深浅色预览。录音及系统音频中断行为仍需实机验证。
           仓库保持私有，下载需要有访问权限的 GitHub 登录。
           NOTES
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt --clobber
+            gh release upload "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 --clobber
           else
-            gh release create "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt --target "$SOURCE_SHA" --title 'Star Music iOS v0.3 · Unsigned IPA' --notes-file RELEASE-NOTES.md
+            gh release create "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 --target "$SOURCE_SHA" --title "Star Music iOS v$APP_VERSION · Unsigned IPA" --notes-file RELEASE-NOTES.md
           fi
           gh release view "$TAG" --json url,assets

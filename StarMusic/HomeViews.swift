@@ -3,102 +3,207 @@ import SwiftUI
 struct CreationHome: View {
     @EnvironmentObject var store: ProjectStore
     @EnvironmentObject var audio: AudioController
-    @Environment(\.colorScheme) var scheme
-    var onStart: (Bool) -> Void; var onOpen: (MusicProject) -> Void; var onImport: () -> Void; var onHelp: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    var onStart: (Bool) -> Void
+    var onOpen: (MusicProject) -> Void
+    var onImport: () -> Void
+    var onHelp: () -> Void
     @State private var chooser = false
     @State private var instruments = false
+    @State private var pendingChoice: StartChoice?
+    private enum StartChoice { case record, blank, file }
+    private var drafts: [MusicProject] { Array(store.projects.filter { !$0.deleted }.prefix(3)) }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack(spacing: 10) {
-                    BrandMark().frame(width: 38, height: 38)
-                    VStack(alignment: .leading, spacing: 2) { Text("Star Music").font(.title3.bold()); Text("MAKE YOUR MELODY").font(.system(size: 8, weight: .medium)).tracking(2).foregroundStyle(.secondary) }
-                    Spacer(); Button(action: onHelp) { Image(systemName: "questionmark.circle").font(.title3).frame(width: 44, height: 44) }.foregroundStyle(.secondary).accessibilityLabel("帮助")
-                }.padding(.vertical, 10)
-                VStack(alignment: .leading, spacing: 8) { Text("YOUR CREATIVE SPACE").font(.caption2).tracking(2).foregroundStyle(.secondary); Text("让每一个灵感，\n都有回响。").font(.title2.weight(.semibold)); Text("从一段哼唱开始，创造属于你的音乐。").font(.caption).foregroundStyle(.secondary) }
-                HStack(spacing: 12) {
-                    Button { chooser = true } label: {
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 28).fill(LinearGradient(colors: [Color(red: 0.98, green: 0.87, blue: 0.53), Palette.gold], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            OrbArt().frame(width: 150, height: 155).opacity(0.32).frame(maxWidth: .infinity, alignment: .trailing).clipped()
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("灵感从这里开始", systemImage: "sparkles").font(.caption2)
-                                Label("开始创作", systemImage: "plus").font(.title2.bold())
-                                Text("哼出旋律，\n写成自己的歌").font(.caption).lineSpacing(5)
-                                Label("无需乐理基础", systemImage: "arrow.right").font(.caption2)
-                            }.padding(22).foregroundStyle(Palette.ink)
-                        }.frame(minHeight: 230)
-                    }.buttonStyle(.plain)
-                    Button(action: onImport) {
-                        VStack(alignment: .leading, spacing: 18) {
-                            Image(systemName: "square.and.arrow.down").font(.title2).foregroundStyle(Palette.gold).frame(width: 40, height: 44).background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                            Spacer(minLength: 0); Text("导入音乐").font(.subheadline.bold()); Text("让已有灵感\n有新的可能").font(.caption2).foregroundStyle(.secondary).lineSpacing(4)
-                            Text("音频 / MIDI\n项目包").font(.caption2).foregroundStyle(.secondary)
-                        }.padding(17).frame(width: 114).frame(minHeight: 230, alignment: .leading).background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: 28))
-                    }.buttonStyle(.plain)
-                }
-                HStack(spacing: 12) {
-                    ToolCard(title: "空白乐谱", subtitle: "从第一个音符，自由书写", symbol: "music.note.list") { onStart(false) }
-                    ToolCard(title: "乐器库", subtitle: "寻找你的声音", symbol: "pianokeys") { instruments = true }
-                }
-                HStack { Text("草稿箱").font(.headline); Text("\(store.projects.filter { !$0.deleted }.count)").font(.caption2).foregroundStyle(.secondary).padding(5).background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5)); Spacer(); NavigationLink { DraftsView(onOpen: onOpen) } label: { HStack { Text("全部"); Image(systemName: "chevron.right") }.font(.caption).foregroundStyle(.secondary).frame(minHeight: 44) } }
-                let drafts = Array(store.projects.filter { !$0.deleted }.prefix(3))
-                if drafts.isEmpty { EmptyState(symbol: "music.note", title: "下一段旋律，等你写下", subtitle: "你的创作会自动保存在这里。") }
-                else { VStack(spacing: 10) { ForEach(drafts) { p in DraftRow(project: p, onOpen: onOpen) } } }
-                Label("草稿自动保存于此设备 · 灵感随时继续", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
-            }.padding(16).frame(maxWidth: 820).frame(maxWidth: .infinity)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                brandHeader.cascade(0)
+                introduction.cascade(1)
+                creationCard.cascade(2)
+                importCard.cascade(3)
+                toolShelf.cascade(4)
+                draftsHeading.cascade(5)
+                recentDrafts
+                Label("灵感保存在此设备，随时继续。", systemImage: "lock")
+                    .font(.caption2).foregroundStyle(.secondary.opacity(0.8)).padding(.top, 2).cascade(8)
+            }.padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 24)
+                .frame(maxWidth: 740).frame(maxWidth: .infinity)
         }.background(Palette.background(scheme)).toolbar(.hidden, for: .navigationBar)
-        .sheet(isPresented: $chooser) {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("灵感，从这里开始").font(.title2.bold())
-                Text("选择一种方式，让脑海里的音乐开始生长。").font(.subheadline).foregroundStyle(.secondary)
-                StartOption(title: "哼唱录制", subtitle: "录下旋律，自动生成乐谱", symbol: "mic") { chooser = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onStart(true) } }
-                StartOption(title: "空白乐谱", subtitle: "从空白五线谱开始写音乐", symbol: "music.note.list") { chooser = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onStart(false) } }
-                StartOption(title: "导入文件", subtitle: "音频、MIDI 或 Star Music 项目包", symbol: "square.and.arrow.down") { chooser = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: onImport) }
-            }.padding(24).presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-        }.sheet(isPresented: $instruments) { InstrumentSheet() }
+            .sheet(isPresented: $chooser, onDismiss: performChoice) { creationSheet }
+            .sheet(isPresented: $instruments) { InstrumentSheet() }
+    }
+    private var brandHeader: some View {
+        HStack(spacing: 10) {
+            BrandMark().frame(width: 32, height: 32)
+            Text("Star Music").font(.system(.title3, design: .rounded).weight(.semibold)).tracking(-0.5)
+            Spacer()
+            Button(action: onHelp) {
+                Image(systemName: "questionmark").font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary).frame(width: 44, height: 44)
+                    .background(.primary.opacity(0.045), in: Circle())
+            }.buttonStyle(MusicPressStyle()).accessibilityLabel("帮助")
+        }
+    }
+    private var introduction: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) { Circle().fill(Palette.gold).frame(width: 4, height: 4); Text("你的创作空间").font(.caption).foregroundStyle(.secondary) }
+            Text("今天，写点音乐。").font(.system(.largeTitle, design: .rounded).weight(.medium)).tracking(-1.2)
+        }.padding(.top, 8).padding(.bottom, 4)
+    }
+    private var creationCard: some View {
+        Button { pendingChoice = nil; chooser = true } label: {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 28)
+                    .fill(LinearGradient(colors: [Color(red: 0.96, green: 0.93, blue: 0.84), Palette.paper], startPoint: .topLeading, endPoint: .bottomTrailing))
+                PaperStaveArtwork().frame(width: 190, height: 150).opacity(0.43)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(.top, 16).clipped()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("让脑海里的旋律，有迹可循。").font(.caption).foregroundStyle(Palette.ink.opacity(0.55))
+                    Spacer(minLength: 24)
+                    Text("开始创作").font(.system(.title, design: .rounded).weight(.semibold)).tracking(-0.8)
+                    Text("哼出旋律，写成自己的歌。").font(.subheadline).foregroundStyle(Palette.ink.opacity(0.65)).padding(.top, 8)
+                    Spacer(minLength: 24)
+                    HStack {
+                        HStack(spacing: 6) { Image(systemName: "mic").font(.caption); Text("录音  ·  写谱  ·  导入").font(.caption2) }.foregroundStyle(Palette.ink.opacity(0.55))
+                        Spacer()
+                        Image(systemName: "arrow.up.right").font(.system(size: 17, weight: .medium))
+                            .frame(width: 44, height: 44).background(Palette.ink, in: Circle()).foregroundStyle(Palette.paper)
+                    }
+                }.padding(24).foregroundStyle(Palette.ink)
+            }.frame(minHeight: 226)
+                .overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.38), lineWidth: 0.8))
+                .shadow(color: .black.opacity(scheme == .dark ? 0.15 : 0.045), radius: 15, x: 0, y: 8)
+        }.buttonStyle(MusicPressStyle(scale: 0.985)).accessibilityIdentifier("home.start")
+            .accessibilityLabel("开始创作").accessibilityHint("选择哼唱录制、空白乐谱或导入文件")
+    }
+    private var importCard: some View {
+        Button(action: onImport) {
+            HStack(spacing: 14) {
+                Image(systemName: "square.and.arrow.down").font(.system(size: 19, weight: .regular))
+                    .frame(width: 42, height: 44).background(Palette.gold.opacity(0.09), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(Palette.gold)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("导入音乐").font(.subheadline.weight(.medium))
+                    Text("接着已有的灵感，往下写。").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 18).padding(.vertical, 14)
+                .background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(.primary.opacity(0.045), lineWidth: 0.7))
+        }.buttonStyle(MusicPressStyle()).accessibilityIdentifier("home.import")
+    }
+    private var toolShelf: some View {
+        HStack(spacing: 12) {
+            ToolCard(title: "空白乐谱", subtitle: "从第一个音符开始", symbol: "music.note.list") { onStart(false) }.accessibilityIdentifier("home.blank")
+            ToolCard(title: "乐器库", subtitle: "为旋律换一种声音", symbol: "pianokeys") { instruments = true }.accessibilityIdentifier("home.instruments")
+        }
+    }
+    private var draftsHeading: some View {
+        HStack {
+            Text("最近草稿").font(.headline.weight(.medium))
+            Text("\(store.projects.filter { !$0.deleted }.count)").font(.caption).foregroundStyle(.tertiary)
+            Spacer()
+            NavigationLink { DraftsView(onOpen: onOpen) } label: {
+                HStack(spacing: 5) { Text("全部"); Image(systemName: "arrow.right").font(.caption2) }
+                    .font(.caption).foregroundStyle(.secondary).frame(minHeight: 44)
+            }.buttonStyle(MusicPressStyle()).accessibilityIdentifier("home.drafts")
+        }.padding(.top, 8)
+    }
+    @ViewBuilder private var recentDrafts: some View {
+        if drafts.isEmpty { EmptyState(symbol: "music.note", title: "下一段旋律，等你写下", subtitle: "你的创作会自动保存在这里。").cascade(6) }
+        else {
+            VStack(spacing: 0) {
+                ForEach(Array(drafts.enumerated()), id: \.element.id) { index, project in
+                    DraftRow(project: project, onOpen: onOpen, grouped: true).cascade(6 + index)
+                    if index != drafts.count - 1 { Rectangle().fill(.primary.opacity(0.045)).frame(height: 0.7).padding(.leading, 84) }
+                }
+            }.background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: 24))
+                .overlay(RoundedRectangle(cornerRadius: 24).stroke(.primary.opacity(0.045), lineWidth: 0.7))
+        }
+    }
+    private var creationSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 13) {
+                    Text("每首歌，\n都有自己的起点。").font(.title2.weight(.medium)).tracking(-0.5).padding(.bottom, 9).cascade(0)
+                    StartOption(title: "哼唱录制", subtitle: "先留下旋律，再自动生成乐谱", symbol: "mic") { choose(.record) }.cascade(1).accessibilityIdentifier("start.record")
+                    StartOption(title: "空白乐谱", subtitle: "从第一颗音符开始写", symbol: "music.note.list") { choose(.blank) }.cascade(2).accessibilityIdentifier("start.blank")
+                    StartOption(title: "导入文件", subtitle: "音频、MIDI 或 Star Music 项目包", symbol: "square.and.arrow.down") { choose(.file) }.cascade(3).accessibilityIdentifier("start.import")
+                }.padding(24)
+            }.background(Palette.background(scheme))
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { chooser = false } label: { Image(systemName: "xmark").font(.caption.weight(.semibold)).frame(width: 44, height: 44) }.buttonStyle(MusicPressStyle()).accessibilityLabel("关闭创作选择") } }
+        }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible).presentationCornerRadius(30)
+    }
+    private func choose(_ choice: StartChoice) { pendingChoice = choice; chooser = false }
+    private func performChoice() {
+        guard let choice = pendingChoice else { return }; pendingChoice = nil
+        switch choice { case .record: onStart(true); case .blank: onStart(false); case .file: onImport() }
     }
 }
+
+struct PaperStaveArtwork: View {
+    var body: some View {
+        Canvas { context, size in
+            var staff = Path()
+            for row in 0..<5 {
+                let y = CGFloat(37 + row * 11)
+                staff.move(to: CGPoint(x: 20, y: y + 34))
+                staff.addCurve(to: CGPoint(x: size.width + 10, y: y - 8), control1: CGPoint(x: 72, y: y + 33), control2: CGPoint(x: 107, y: y - 15))
+            }
+            context.stroke(staff, with: .color(Palette.ink.opacity(0.26)), lineWidth: 0.7)
+            let points = [CGPoint(x: 74, y: 86), CGPoint(x: 107, y: 60), CGPoint(x: 141, y: 49)]
+            for point in points {
+                context.fill(Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 3, width: 8, height: 6)), with: .color(Palette.ink.opacity(0.55)))
+                var stem = Path(); stem.move(to: point); stem.addLine(to: CGPoint(x: point.x + 4, y: point.y - 21)); context.stroke(stem, with: .color(Palette.ink.opacity(0.55)), lineWidth: 1)
+            }
+        }.accessibilityHidden(true)
+    }
+}
+
 struct BrandMark: View {
     var body: some View { ZStack { RoundedRectangle(cornerRadius: 11).fill(Palette.gold); Image(systemName: "music.note").font(.title3.bold()).foregroundStyle(Palette.ink); Rectangle().fill(Palette.gold).frame(width: 4).rotationEffect(.degrees(42)).padding(5) }.accessibilityHidden(true) }
 }
-struct OrbArt: View {
-    var body: some View { ZStack { Circle().fill(RadialGradient(colors: [.white.opacity(0.8), Color(red: 0.79, green: 0.61, blue: 0.24)], center: .topLeading, startRadius: 0, endRadius: 170)).padding(18); Ellipse().stroke(Color.white.opacity(0.6), lineWidth: 10).frame(height: 58).rotationEffect(.degrees(-32)); Image(systemName: "music.note").font(.system(size: 55, weight: .medium)).foregroundStyle(Palette.ink.opacity(0.65)).rotationEffect(.degrees(8)) }.accessibilityHidden(true) }
-}
 struct ToolCard: View {
     var title: String; var subtitle: String; var symbol: String; var action: () -> Void
-    var body: some View { Button(action: action) { HStack(spacing: 10) { Image(systemName: symbol).font(.title3).frame(width: 30, height: 44); VStack(alignment: .leading, spacing: 6) { Text(title).font(.subheadline.weight(.medium)); Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }; Spacer(minLength: 0) }.frame(maxWidth: .infinity, alignment: .leading).musicCard() }.buttonStyle(.plain) }
+    var body: some View { Button(action: action) { HStack(spacing: 10) { Image(systemName: symbol).font(.title3).frame(width: 30, height: 44); VStack(alignment: .leading, spacing: 6) { Text(title).font(.subheadline.weight(.medium)); Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }; Spacer(minLength: 0) }.frame(maxWidth: .infinity, alignment: .leading).musicCard() }.buttonStyle(MusicPressStyle()) }
 }
 struct StartOption: View {
     var title: String; var subtitle: String; var symbol: String; var action: () -> Void
-    var body: some View { Button(action: action) { HStack(spacing: 16) { Image(systemName: symbol).foregroundStyle(Palette.gold).font(.title2).frame(width: 42, height: 44); VStack(alignment: .leading, spacing: 6) { Text(title).font(.headline); Text(subtitle).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }.musicCard(radius: 16) }.buttonStyle(.plain) }
+    var body: some View { Button(action: action) { HStack(spacing: 16) { Image(systemName: symbol).foregroundStyle(Palette.gold).font(.title2).frame(width: 42, height: 44); VStack(alignment: .leading, spacing: 6) { Text(title).font(.headline); Text(subtitle).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }.musicCard(radius: 16) }.buttonStyle(MusicPressStyle()) }
 }
 struct EmptyState: View {
     var symbol: String; var title: String; var subtitle: String
     var body: some View { VStack(spacing: 14) { Image(systemName: symbol).font(.largeTitle).foregroundStyle(Palette.gold); Text(title).font(.headline); Text(subtitle).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(.vertical, 48).musicCard() }
 }
 struct DraftRow: View {
+    @Environment(\.colorScheme) private var scheme
     @EnvironmentObject var store: ProjectStore
     @EnvironmentObject var audio: AudioController
-    let project: MusicProject; var onOpen: (MusicProject) -> Void
+    let project: MusicProject; var onOpen: (MusicProject) -> Void; var grouped = false; var compact = false
     @State private var rename = false
     @State private var name = ""
     @State private var move = false
     @State private var folder = ""
     @State private var share: ShareItem?
+    @State private var confirmDelete = false
     var body: some View {
-        HStack(spacing: 8) {
+        let rowLayout = compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        rowLayout {
             Button { if !project.deleted { onOpen(project) } } label: {
-                HStack(spacing: 12) {
-                    ZStack { RoundedRectangle(cornerRadius: 12).fill(Color(red: 0.85, green: 0.84, blue: 0.8)); Image(systemName: "music.note.list").font(.title2).foregroundStyle(Palette.ink) }.frame(width: 54, height: 58)
+                let previewLayout = compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
+                previewLayout {
+                    MiniScore(notes: project.tracks[0].notes).frame(width: compact ? nil : 52, height: compact ? 88 : 58)
                     VStack(alignment: .leading, spacing: 8) {
                         Text(project.name).font(.subheadline.weight(.medium)).lineLimit(2)
-                        HStack(spacing: 8) { Text(musicTime(project.seconds)); Text("\(project.tracks.count) 条音轨"); if project.sample { Text("示例").foregroundStyle(Palette.gold) } }.font(.caption2).foregroundStyle(.secondary)
-                    }; Spacer(minLength: 0)
-                }.frame(minHeight: 58)
-            }.buttonStyle(.plain)
+                        Text("\(musicTime(project.seconds)) · \(project.tracks.count) 条音轨" + (project.sample ? " · 示例" : "")).font(.caption2).foregroundStyle(.secondary)
+                        if !compact { Text(project.updated, style: .relative).font(.caption2).foregroundStyle(.tertiary) }
+                    }
+                }.frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            }.buttonStyle(MusicPressStyle())
+            HStack(spacing: 0) {
+            if compact { Spacer(minLength: 0) }
             if project.deleted { Button("恢复") { store.update(project) { $0.deleted = false } }.font(.caption).frame(minWidth: 44, minHeight: 44) }
-            else { Button { Task { do { try await audio.play(project) } catch { store.error = error.localizedDescription } } } label: { Image(systemName: audio.playingID == project.id ? "pause.fill" : "play.fill").font(.caption).frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("试听 \(project.name)") }
+            else { Button { Task { do { try await audio.play(project) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == project.id).font(.caption).frame(width: 44, height: 44) }.buttonStyle(MusicPressStyle()).accessibilityLabel("试听 \(project.name)") }
             Menu {
                 if !project.deleted {
                     Button("重命名", systemImage: "pencil") { name = project.name; rename = true }
@@ -106,10 +211,12 @@ struct DraftRow: View {
                     Button("复制项目", systemImage: "doc.on.doc") { do { try store.duplicate(project) } catch { store.error = error.localizedDescription } }
                     Button("移动到文件夹", systemImage: "folder") { folder = project.folder; move = true }
                     Button("导出项目包", systemImage: "square.and.arrow.up") { do { share = ShareItem(url: try store.package(project)) } catch { store.error = error.localizedDescription } }
-                    Button("移入最近删除", systemImage: "trash", role: .destructive) { audio.stopPlayback(); store.update(project) { $0.deleted = true } }
+                    Button("移入最近删除", systemImage: "trash", role: .destructive) { confirmDelete = true }
                 } else { Button("恢复草稿", systemImage: "arrow.uturn.backward") { store.update(project) { $0.deleted = false } } }
             } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44).foregroundStyle(.secondary) }.accessibilityLabel("草稿更多操作")
-        }.padding(12).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
+            }
+        }.padding(.horizontal, 14).padding(.vertical, 12).background(grouped ? Color.clear : Palette.card(scheme), in: RoundedRectangle(cornerRadius: 18))
+        .confirmationDialog("移入最近删除？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("移入最近删除", role: .destructive) { audio.stopPlayback(); store.update(project) { $0.deleted = true } }; Button("取消", role: .cancel) {} } message: { Text("可以随时在最近删除中恢复这份草稿。") }
         .alert("重命名", isPresented: $rename) { TextField("名称", text: $name); Button("保存") { store.update(project) { $0.name = name.isEmpty ? "未命名的旋律" : String(name.prefix(60)) } }; Button("取消", role: .cancel) {} }
         .alert("移动到文件夹", isPresented: $move) { TextField("文件夹名称", text: $folder); Button("移动") { store.update(project) { $0.folder = folder.isEmpty ? "未分类" : String(folder.prefix(40)) } }; Button("取消", role: .cancel) {} }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
@@ -124,23 +231,48 @@ struct DraftsView: View {
     @State private var grid = false
     @State private var sort = "最近编辑"
     @State private var folder = "全部文件夹"
+    @State private var searchExpanded = false
+    @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
     var filtered: [MusicProject] { store.projects.filter { $0.deleted == deleted && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (folder == "全部文件夹" || $0.folder == folder) }.sorted { a, b in sort == "名称" ? a.name < b.name : sort == "收藏优先" ? (a.favorite == b.favorite ? a.updated > b.updated : a.favorite) : a.updated > b.updated } }
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                searchBar
                 HStack {
                     Picker("排序", selection: $sort) { ForEach(["最近编辑", "名称", "收藏优先"], id: \.self) { Text($0) } }.pickerStyle(.menu)
                     Picker("文件夹", selection: $folder) { Text("全部文件夹").tag("全部文件夹"); ForEach(Array(Set(store.projects.map(\.folder))).sorted(), id: \.self) { Text($0).tag($0) } }.pickerStyle(.menu)
-                    Spacer(); Button { grid.toggle() } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2").frame(width: 44, height: 44) }.accessibilityLabel("切换草稿布局")
+                    Spacer(); Button { withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.86)) { grid.toggle() } } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2").frame(width: 44, height: 44) }.buttonStyle(MusicPressStyle()).accessibilityIdentifier("drafts.layout").accessibilityLabel(grid ? "切换为列表" : "切换为网格")
                 }
                 if filtered.isEmpty { EmptyState(symbol: "folder", title: deleted ? "没有已删除的草稿" : "没有匹配的旋律", subtitle: "删除的草稿可以恢复，所有草稿都保存在本机。") }
-                if grid { LazyVGrid(columns: [GridItem(.adaptive(minimum: 320))], spacing: 12) { ForEach(filtered) { DraftRow(project: $0, onOpen: onOpen) } } }
-                else { LazyVStack(spacing: 10) { ForEach(filtered) { DraftRow(project: $0, onOpen: onOpen) } } }
+                DraftCollectionLayout(columns: grid && !typeSize.isAccessibilitySize ? 2 : 1) {
+                    ForEach(filtered) { DraftRow(project: $0, onOpen: onOpen, compact: grid && !typeSize.isAccessibilitySize) }
+                }
             }.padding(16)
         }.background(Palette.background(scheme)).navigationTitle(deleted ? "最近删除" : "草稿箱").navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $search, prompt: "搜索你的旋律")
+        
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { deleted.toggle() } label: { Image(systemName: deleted ? "folder" : "trash").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel(deleted ? "全部草稿" : "最近删除") } }
     }
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86)) { searchExpanded.toggle() }
+                searchFocused = searchExpanded
+                if !searchExpanded { search = "" }
+            } label: { Image(systemName: searchExpanded ? "xmark" : "magnifyingglass").contentTransition(.symbolEffect(.replace)).frame(width: 44, height: 44) }
+                .buttonStyle(MusicPressStyle()).accessibilityLabel(searchExpanded ? "关闭搜索" : "搜索草稿").accessibilityIdentifier("drafts.searchToggle")
+            if searchExpanded {
+                TextField("搜索你的旋律", text: $search).focused($searchFocused).submitLabel(.search)
+                    .onSubmit { searchFocused = false }.accessibilityIdentifier("drafts.searchField")
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44) }.accessibilityLabel("清空搜索") }
+            }
+        }.padding(.trailing, searchExpanded ? 6 : 0).frame(maxWidth: searchExpanded ? .infinity : 44, alignment: .leading)
+            .background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: searchExpanded ? 16 : 22))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
 }
 struct CommunityView: View {
     @EnvironmentObject var store: ProjectStore
@@ -169,15 +301,15 @@ struct CommunityView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             ZStack(alignment: .bottomTrailing) {
                                 RoundedRectangle(cornerRadius: 20).fill([Color(red: 0.53, green: 0.61, blue: 0.44), Color(red: 0.39, green: 0.55, blue: 0.61), Color(red: 0.64, green: 0.44, blue: 0.37)][i])
-                                OrbArt().padding(30).opacity(0.7)
+                                MiniScore(notes: examples[i].tracks[0].notes).padding(30).rotationEffect(.degrees(-6)).opacity(0.85)
                                 Text(["完整作品", "旋律片段", "创作过程"][i] + " · 示例").font(.caption2).padding(10).background(.black.opacity(0.15), in: Capsule()).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(16)
-                                Button { Task { do { try await audio.play(examples[i]) } catch { store.error = error.localizedDescription } } } label: { Image(systemName: audio.playingID == examples[i].id ? "pause.fill" : "play.fill").frame(width: 48, height: 48).background(.white.opacity(0.9), in: Circle()).foregroundStyle(Palette.ink) }.padding(16).accessibilityLabel("播放演示作品")
+                                Button { Task { do { try await audio.play(examples[i]) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == examples[i].id).frame(width: 48, height: 48).background(.white.opacity(0.9), in: Circle()).foregroundStyle(Palette.ink) }.padding(16).accessibilityLabel("播放演示作品")
                             }.frame(height: 215)
-                            Button { detail = i } label: { Text(titles[i]).font(.headline) }.buttonStyle(.plain)
+                            Button { detail = i } label: { Text(titles[i]).font(.headline) }.buttonStyle(MusicPressStyle())
                             HStack { Text(authors[i]).font(.caption).foregroundStyle(.secondary); Spacer(); Text(Instrument.allCases[i].name).font(.caption2).foregroundStyle(.secondary) }
                             HStack {
                                 Text(musicTime(MusicProject.example(i).seconds)).font(.caption).foregroundStyle(.secondary); Spacer()
-                                Button { if likes.contains(i) { likes.remove(i) } else { likes.insert(i) }; UserDefaults.standard.set(Array(likes), forKey: "demoLikes") } label: { Label(likes.contains(i) ? "已喜欢" : "喜欢", systemImage: likes.contains(i) ? "heart.fill" : "heart").font(.caption).frame(minHeight: 44) }
+                                LikeBurstButton(selected: likes.contains(i)) { if likes.contains(i) { likes.remove(i) } else { likes.insert(i) }; UserDefaults.standard.set(Array(likes), forKey: "demoLikes") }
                                 Button { comments = true } label: { Image(systemName: "bubble.right").frame(width: 44, height: 44) }.accessibilityLabel("查看演示评论")
                             }
                         }.musicCard()
@@ -188,7 +320,7 @@ struct CommunityView: View {
         .sheet(isPresented: Binding(get: { detail != nil }, set: { if !$0 { detail = nil } })) {
             if let i = detail {
                 NavigationStack {
-                    VStack(alignment: .leading, spacing: 24) { OrbArt().frame(height: 210); Text(titles[i]).font(.title2.bold()); Text("\(authors[i]) · 演示创作者").foregroundStyle(.secondary); Text("从日常的一点情绪出发，把它写成旋律。希望这段音乐也能陪伴你的某一个瞬间。").font(.subheadline); HStack {
+                    VStack(alignment: .leading, spacing: 24) { MiniScore(notes: examples[i].tracks[0].notes).frame(height: 180); Text(titles[i]).font(.title2.bold()); Text("\(authors[i]) · 演示创作者").foregroundStyle(.secondary); Text("从日常的一点情绪出发，把它写成旋律。希望这段音乐也能陪伴你的某一个瞬间。").font(.subheadline); HStack {
                         Button(favorites.contains(i) ? "已在本地收藏" : "本地收藏") { if favorites.contains(i) { favorites.remove(i) } else { favorites.insert(i) }; UserDefaults.standard.set(Array(favorites), forKey: "demoFavorites") }.frame(minHeight: 44)
                         Spacer(); GoldButton(title: "基于此创作", symbol: "music.note") { remix = i }
                     }; Text("内置原创示例，可复制旋律为独立工程。不会修改示例来源。").font(.caption).foregroundStyle(.secondary); Spacer() }.padding(24).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { detail = nil } } }
@@ -205,6 +337,7 @@ struct MessagesView: View {
 struct ProfileView: View {
     @EnvironmentObject var store: ProjectStore
     @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("hapticsEnabled") private var haptics = true
     var onOpen: (MusicProject) -> Void
     @State private var help = false
     var body: some View {
@@ -217,6 +350,7 @@ struct ProfileView: View {
             }
             Section("设置") {
                 Picker("外观", selection: $appearance) { Text("深色").tag("dark"); Text("浅色").tag("light"); Text("跟随系统").tag("system") }
+                Toggle("轻触反馈", isOn: $haptics).toggleStyle(JellyToggleStyle()).accessibilityIdentifier("settings.haptics")
                 Button { help = true } label: { Label("关于与帮助", systemImage: "questionmark.circle") }
             }
             Section { Text("草稿保存在本机应用沙盒中。删除应用会移除本地数据；请定期通过草稿菜单导出项目包。所有音源为内置合成，无需联网下载。").font(.caption).foregroundStyle(.secondary) }

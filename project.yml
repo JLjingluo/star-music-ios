@@ -7,8 +7,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    MARKETING_VERSION: '0.3.0'
-    CURRENT_PROJECT_VERSION: '1'
+    MARKETING_VERSION: '0.3.1'
+    CURRENT_PROJECT_VERSION: '2'
     DEVELOPMENT_TEAM: ''
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     CODE_SIGN_STYLE: Automatic
@@ -28,6 +28,7 @@ targets:
     scheme:
       testTargets:
         - StarMusicTests
+        - StarMusicUITests
   StarMusicTests:
     type: bundle.unit-test
     platform: iOS
@@ -39,3 +40,15 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: music.star.starmusic.tests
+
+  StarMusicUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: StarMusicUITests
+    dependencies:
+      - target: StarMusic
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: music.star.starmusic.uitests

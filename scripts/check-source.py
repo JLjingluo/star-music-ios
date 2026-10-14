@@ -8,13 +8,13 @@ from openstep_parser import OpenStepDecoder
 from PIL import Image
 root=Path(__file__).resolve().parent.parent
 parser=Parser(Language(tree_sitter_swift.language()))
-source=list((root/'StarMusic').glob('*.swift'))+list((root/'StarMusicTests').glob('*.swift'))
+source=list((root/'StarMusic').glob('*.swift'))+list((root/'StarMusicTests').glob('*.swift'))+list((root/'StarMusicUITests').glob('*.swift'))
 for p in source:
     assert not parser.parse(p.read_bytes()).root_node.has_error, f'Swift grammar error: {p}'
 for p in root.rglob('*.json'):json.loads(p.read_text())
 for p in [root/'StarMusic/Info.plist',root/'StarMusic/PrivacyInfo.xcprivacy']:plistlib.loads(p.read_bytes())
 assert 'NSMicrophoneUsageDescription' in plistlib.loads((root/'StarMusic/Info.plist').read_bytes())
-project=yaml.safe_load((root/'project.yml').read_text());assert set(project['targets'])=={'StarMusic','StarMusicTests'}
+project=yaml.safe_load((root/'project.yml').read_text());assert set(project['targets'])=={'StarMusic','StarMusicTests','StarMusicUITests'}
 for p in (root/'.github/workflows').glob('*.yml'):
     workflow=yaml.load(p.read_text(),Loader=yaml.BaseLoader)
     expected_permissions={'contents':'write','actions':'read'} if p.name=='ipa-download.yml' else {'contents':'read'}
@@ -25,7 +25,7 @@ assert image.size==(1024,1024)
 if image.mode=='RGBA':assert image.getchannel('A').getextrema()==(255,255)
 with (root/'StarMusic.xcodeproj/project.pbxproj').open() as f:pbx=OpenStepDecoder.ParseFromFile(f)
 objects=pbx['objects'];assert pbx['rootObject'] in objects
-assert len([o for o in objects.values() if o['isa']=='PBXNativeTarget'])==2
+assert len([o for o in objects.values() if o['isa']=='PBXNativeTarget'])==3
 swift_files=[o['path'] for o in objects.values() if o['isa']=='PBXFileReference' and o.get('path','').endswith('.swift')]
 assert sorted(swift_files)==sorted(p.name for p in source)
 XML.parse(root/'StarMusic.xcodeproj/xcshareddata/xcschemes/StarMusic.xcscheme')

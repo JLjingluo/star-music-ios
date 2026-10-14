@@ -15,22 +15,23 @@ import UniformTypeIdentifiers
 }
 
 enum Palette {
-    static let gold = Color(red: 0.96, green: 0.84, blue: 0.43)
-    static let ink = Color(red: 0.13, green: 0.14, blue: 0.15)
-    static func background(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.067, green: 0.071, blue: 0.078) : Color(red: 0.965, green: 0.954, blue: 0.93) }
-    static func card(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.11, green: 0.12, blue: 0.13) : Color(red: 1, green: 0.997, blue: 0.977) }
+    static let gold = Color(red: 0.90, green: 0.77, blue: 0.43)
+    static let ink = Color(red: 0.13, green: 0.14, blue: 0.12)
+    static let paper = Color(red: 0.93, green: 0.89, blue: 0.78)
+    static func background(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.065, green: 0.069, blue: 0.061) : Color(red: 0.965, green: 0.957, blue: 0.936) }
+    static func card(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.105, green: 0.112, blue: 0.098) : Color(red: 1, green: 0.997, blue: 0.977) }
 }
 
 struct CardStyle: ViewModifier {
     @Environment(\.colorScheme) var scheme
     var radius: CGFloat = 20
-    func body(content: Content) -> some View { content.padding(18).background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: radius)).overlay(RoundedRectangle(cornerRadius: radius).stroke(.primary.opacity(0.07), lineWidth: 1)) }
+    func body(content: Content) -> some View { content.padding(18).background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: radius)).overlay(RoundedRectangle(cornerRadius: radius).stroke(LinearGradient(colors: [.white.opacity(scheme == .dark ? 0.09 : 0.6), .primary.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.75)) }
 }
 extension View { func musicCard(radius: CGFloat = 20) -> some View { modifier(CardStyle(radius: radius)) } }
 
 struct GoldButton: View {
     var title: String; var symbol: String = "plus"; var action: () -> Void
-    var body: some View { Button(action: action) { Label(title, systemImage: symbol).font(.subheadline.weight(.semibold)).frame(minHeight: 44).padding(.horizontal, 18).background(Palette.gold, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(Palette.ink) }.buttonStyle(.plain) }
+    var body: some View { Button(action: action) { Label(title, systemImage: symbol).font(.subheadline.weight(.semibold)).frame(minHeight: 44).padding(.horizontal, 18).background(Palette.gold, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(Palette.ink) }.buttonStyle(MusicPressStyle()) }
 }
 struct ShareSheet: UIViewControllerRepresentable {
     var url: URL
@@ -56,6 +57,8 @@ struct RootView: View {
             NavigationStack { MessagesView() }.tabItem { Label("消息", systemImage: "bubble.left.and.bubble.right") }.tag(2)
             NavigationStack { ProfileView(onOpen: open) }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(3)
         }
+        .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) { MusicTabBar(selection: $tab) }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
         .fullScreenCover(item: $route) { route in
             if route.record { RecordingView(project: route.project, onEdit: { p in self.route = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.route = ProjectRoute(project: p) } }) }

@@ -4,6 +4,7 @@ import SwiftUI
     @EnvironmentObject var audio: AudioController
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: EditorSession
     @State private var addMode = false
     @State private var multiTrack = false
@@ -30,7 +31,7 @@ import SwiftUI
                     else {
                         ScoreCanvas(notes: session.track.notes, bars: session.project.bars, selected: session.selectedNote, addMode: addMode,
                                     onSelect: { session.selectedNote = $0 }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveNote)
-                        if session.selected != nil { noteInspector }
+                        if session.selected != nil { noteInspector.transition(.opacity.combined(with: .move(edge: .top))) }
                         else { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
                     playbackBar
@@ -50,11 +51,11 @@ import SwiftUI
                         } label: { HStack { Image(systemName: "ellipsis").frame(width: 30, height: 44); Text("更多工具").font(.subheadline) }.frame(maxWidth: .infinity, minHeight: 72).musicCard() }
                     }
                     Label("自动保存至本地 · 三种内置合成音色", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
-                }.padding(16)
+                }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
             }.background(Palette.background(scheme))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { leave() } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("返回创作首页") }
+                ToolbarItem(placement: .topBarLeading) { Button { leave() } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("返回创作首页").accessibilityIdentifier("editor.back") }
                 ToolbarItem(placement: .principal) { VStack(spacing: 3) { TextField("项目名称", text: Binding(get: { session.project.name }, set: { name in session.edit { $0.name = name.isEmpty ? "未命名的旋律" : String(name.prefix(60)) } })).font(.subheadline.weight(.semibold)).multilineTextAlignment(.center); Button(session.saveStatus) { session.persist() }.font(.caption2).foregroundStyle(.secondary) }.frame(maxWidth: 200) }
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { audio.stopPlayback(); session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.disabled(session.undoHistory.isEmpty).accessibilityLabel("撤销")
@@ -93,7 +94,7 @@ import SwiftUI
     private var playbackBar: some View {
         HStack(spacing: 20) {
             Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 44, height: 44) }.accessibilityLabel("回到起点")
-            Button { Task { do { audio.loop = loop; try await audio.play(session.project) } catch { session.store.error = error.localizedDescription } } } label: { Image(systemName: audio.playingID == session.project.id ? "pause.fill" : "play.fill").frame(width: 50, height: 50).background(Palette.gold, in: Circle()).foregroundStyle(Palette.ink) }.accessibilityLabel("播放或暂停")
+            Button { Task { do { audio.loop = loop; try await audio.play(session.project) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id).frame(width: 50, height: 50).background(Palette.gold, in: Circle()).foregroundStyle(Palette.ink) }.accessibilityLabel("播放或暂停")
             Text("第 \(min(session.project.bars, Int(audio.playbackSeconds * session.project.bpm / 240) + 1)) / \(session.project.bars) 小节").font(.caption).foregroundStyle(.secondary)
             Button { loop.toggle(); audio.loop = loop; audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
         }.frame(maxWidth: .infinity).musicCard(radius: 16)
