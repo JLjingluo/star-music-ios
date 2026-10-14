@@ -19,3 +19,9 @@ Artifact 保留 14 天（测试结果 7 天），请下载保存。未签名 IPA
 ## 已验证范围
 
 音高与静音识别、自由节奏时间定位、MIDI 往返与重复音符、无效导入数据校验、WAV PCM 编码、草稿原子保存/独立复制/恢复、项目包原录音保留、撤销重做。实际麦克风和音频中断行为未作真机测试。
+
+## IPA 直链
+
+[直接下载 StarMusic-Unsigned.ipa](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.3.0-unsigned-build-38422764650/StarMusic-Unsigned.ipa)
+
+没有额外 ZIP 包装。仓库保持私有，下载需有访问权限的 GitHub 登录。该包未签名，安装到 iPhone 前需要有效的 Apple 签名。已验证包内为 arm64 iPhoneOS 应用，并提供 SHA-256 校验附件。

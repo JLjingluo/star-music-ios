@@ -100,3 +100,9 @@ base64 -i StarMusic.mobileprovision | tr -d '\n' | pbcopy
 推荐通过 GitHub 连接授权。若必须使用 PAT：创建空私有仓库后，在 Settings → Developer settings → Personal access tokens → Fine-grained tokens 中创建短期令牌，只选该仓库，赋予 Contents、Workflows、Actions 的 Read and write 权限；Metadata 默认只读。组织仓库可能需要组织审批。
 
 把令牌配置到任务环境的安全凭据输入中；不要发送到聊天、源码或仓库。已经贴到聊天的令牌应立即撤销。连接所授予的权限不一定包含上传代码或触发 Actions，需以实际验证为准。
+
+## IPA 直链
+
+[直接下载 StarMusic-Unsigned.ipa](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.3.0-unsigned-build-38422764650/StarMusic-Unsigned.ipa)
+
+没有额外 ZIP 包装。仓库保持私有，下载需有访问权限的 GitHub 登录。该包未签名，安装到 iPhone 前需要有效的 Apple 签名。已验证包内为 arm64 iPhoneOS 应用，并提供 SHA-256 校验附件。
