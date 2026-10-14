@@ -92,7 +92,7 @@ enum PitchAnalyzer {
             } else if active == nil {
                 active = (midi, frame.time, end, frame.confidence); pending = nil
             } else {
-                if pending?.midi == midi { pending?.count += 1; pending?.confidence = min(pending?.confidence ?? 1, frame.confidence) }
+                if var candidate = pending, candidate.midi == midi { candidate.count += 1; candidate.confidence = min(candidate.confidence, frame.confidence); pending = candidate }
                 else { pending = (midi, frame.time, frame.confidence, 1) }
                 if let candidate = pending, candidate.count >= 2 {
                     active?.end = candidate.start; flush(); active = (candidate.midi, candidate.start, end, candidate.confidence); pending = nil

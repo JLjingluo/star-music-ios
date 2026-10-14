@@ -92,6 +92,7 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
                 count += 1
                 guard count <= 20000, note.start.isFinite, note.start >= 0, note.duration.isFinite, note.duration > 0, note.start + note.duration <= 100000,
                       note.midi == nil || (0...127).contains(note.midi!), note.confidence.isFinite, (0...1).contains(note.confidence) else { throw MusicError.invalidProject }
+                for value in [note.rawStart, note.rawDuration].compactMap({ $0 }) { guard value.isFinite, value >= 0, value <= 100000 else { throw MusicError.invalidProject } }
             }
         }
     }
