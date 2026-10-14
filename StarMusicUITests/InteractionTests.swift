@@ -7,6 +7,7 @@ final class InteractionTests: XCTestCase {
         app.launchArguments = ["-appearance", appearance]
         app.launch()
         XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.tabBars.count, 0, "Use exactly one custom bottom navigation, without a system bar underneath.")
         return app
     }
     private func capture(_ name: String) {

@@ -38,6 +38,14 @@ struct MusicPressStyle: ButtonStyle {
     }
 }
 extension View { func cascade(_ order: Int) -> some View { modifier(CascadeEntrance(order: order)) } }
+/// Keep each navigation stack's history without creating a second system tab bar.
+struct TabSurface: ViewModifier {
+    var selected: Bool
+    func body(content: Content) -> some View {
+        content.opacity(selected ? 1 : 0).allowsHitTesting(selected)
+            .accessibilityHidden(!selected).zIndex(selected ? 1 : 0)
+    }
+}
 struct MusicTabBar: View {
     @Binding var selection: Int
     @Environment(\.colorScheme) private var scheme

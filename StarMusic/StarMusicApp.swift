@@ -51,13 +51,12 @@ struct RootView: View {
     @State private var importing = false
     @State private var help = false
     var body: some View {
-        TabView(selection: $tab) {
-            NavigationStack { CreationHome(onStart: create, onOpen: open, onImport: { importer = true }, onHelp: { help = true }) }.tabItem { Label("创作", systemImage: "plus.circle") }.tag(0)
-            NavigationStack { CommunityView(onRemix: open) }.tabItem { Label("社区", systemImage: "music.note.house") }.tag(1)
-            NavigationStack { MessagesView() }.tabItem { Label("消息", systemImage: "bubble.left.and.bubble.right") }.tag(2)
-            NavigationStack { ProfileView(onOpen: open) }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(3)
+        ZStack {
+            NavigationStack { CreationHome(onStart: create, onOpen: open, onImport: { importer = true }, onHelp: { help = true }) }.modifier(TabSurface(selected: tab == 0))
+            NavigationStack { CommunityView(onRemix: open) }.modifier(TabSurface(selected: tab == 1))
+            NavigationStack { MessagesView() }.modifier(TabSurface(selected: tab == 2))
+            NavigationStack { ProfileView(onOpen: open) }.modifier(TabSurface(selected: tab == 3))
         }
-        .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom, spacing: 0) { if route == nil { MusicTabBar(selection: $tab) } }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
         .fullScreenCover(item: $route) { route in
