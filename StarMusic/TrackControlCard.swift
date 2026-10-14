@@ -4,6 +4,7 @@ struct TrackControlCard: View {
     var track: MusicTrack
     var beats: Double
     var professional: Bool
+    var simple: Bool = false
     var canDelete: Bool
     var hasSource: Bool
     var onEdit: () -> Void
@@ -39,14 +40,15 @@ struct TrackControlCard: View {
                     Button("删除音轨", role: .destructive) { confirmDelete = true }.disabled(!canDelete)
                 } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("\(track.name) 更多操作")
             }
-            HStack {
-                Toggle("静音", isOn: Binding(get: { track.muted }, set: { value in change { $0.muted = value } })).font(.caption)
-                Toggle("独奏", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } })).font(.caption)
+            if !simple { VStack(spacing: 8) {
+                Toggle(professional ? "静音" : "暂时不播放", isOn: Binding(get: { track.muted }, set: { value in change { $0.muted = value } })).font(.caption)
+                Toggle(professional ? "独奏" : "只听这个声音", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } })).font(.caption)
             }
             HStack { Image(systemName: "speaker.wave.2"); Slider(value: $volume, in: 0...1) { editing in if !editing { change { $0.volume = volume } } } }.accessibilityLabel("\(track.name) 音量")
-            PianoRoll(notes: track.notes, beats: beats).frame(height: 64)
+            PianoRoll(notes: track.notes, beats: beats).frame(height: 44)
+            }
             HStack {
-                Button("编辑音符", action: onEdit).frame(minHeight: 44)
+                Button(professional ? "编辑音符" : "修改旋律", action: onEdit).frame(minHeight: 44)
                 Spacer()
                 Button(action: onRecord) { Image(systemName: "mic").frame(width: 44, height: 44) }.accessibilityLabel("在 \(track.name) 录唱")
                 Button(action: onImport) { Image(systemName: "square.and.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("导入 \(track.name)")
@@ -55,7 +57,7 @@ struct TrackControlCard: View {
                 Picker("此轨试听", selection: Binding(get: { track.useOriginalAudio ?? false }, set: { value in change { $0.useOriginalAudio = value } })) { Text("乐器演奏").tag(false); Text("原声录音").tag(true) }.pickerStyle(.segmented)
             }
             if professional { sourceControls }
-            if let source = track.recognitionSource { Text(source).font(.caption2).foregroundStyle(.secondary) }
+            if professional, let source = track.recognitionSource { Text(source).font(.caption2).foregroundStyle(.secondary) }
             if let text = track.transcript, !text.isEmpty { Text("歌词 / 口述\n" + text).font(.caption).textSelection(.enabled) }
         }.musicCard(radius: 20)
             .onAppear { volume = track.volume }.onChange(of: track.volume) { _, value in volume = value }

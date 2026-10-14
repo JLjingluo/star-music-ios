@@ -10,6 +10,7 @@ import SwiftUI
     var targetTrackID: UUID?
     var onEdit: (MusicProject) -> Void
     var onSaved: ((MusicProject) -> Void)?
+    @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
     @State private var completed = false
     @State private var createdFile: String?
     @State private var beat = false
@@ -33,20 +34,20 @@ import SwiftUI
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    Text("CAPTURE YOUR INSPIRATION").font(.caption2).tracking(2).foregroundStyle(.secondary)
+                    if rawMode == StudioMode.professional.rawValue { Text("CAPTURE YOUR INSPIRATION").font(.caption2).tracking(2).foregroundStyle(.secondary) }
                     Text(audio.recordingState == .ready ? "准备好了，就哼唱吧。" : "把脑海里的旋律，留下来。").font(.title2.weight(.semibold)).multilineTextAlignment(.center)
                     Text(musicTime(audio.elapsed)).font(.system(.largeTitle, design: .monospaced).weight(.light)).monospacedDigit().accessibilityLabel("录音时长 \(Int(audio.elapsed)) 秒")
                     Label(statusText, systemImage: audio.recordingState == .recording ? "record.circle" : "mic").font(.caption).foregroundStyle(audio.recordingState == .recording ? Color(red: 0.89, green: 0.58, blue: 0.53) : Color.secondary)
                     Waveform(levels: audio.levels).frame(height: 125).padding(.horizontal, 10)
-                    RecognitionEngineControl()
+                    if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() } else if RecognitionSettings.load().engine == .cloud { Text("主动识别会把录音发送到你配置的模型服务。").font(.caption).foregroundStyle(.secondary) }
                     if audio.recordingState == .ready {
-                        Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟节拍哼唱").tag(true) }.pickerStyle(.segmented)
+                        Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper("\(Int(project.bpm)) BPM", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
                         Button { Task { await begin() } } label: { Circle().fill(Color(red: 0.88, green: 0.57, blue: 0.53)).frame(width: 64, height: 64).padding(8).overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1)) }.accessibilityLabel("开始录音")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.buttonStyle(.bordered).frame(minHeight: 44)
-                            GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送原声并识别" : "完成并生成乐谱", symbol: "checkmark") { finishAndAnalyze() }
+                            GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送原声并识别" : rawMode == StudioMode.professional.rawValue ? "完成并生成乐谱" : "完成，整理旋律", symbol: "checkmark") { finishAndAnalyze() }
                         }
                     } else { GoldButton(title: "继续编辑", symbol: "music.note") { if saveRecordingMetadata() { edit() } } }
                     Text("在安静环境中，清晰地哼唱一条旋律。\n首版支持单声部哼唱，不承诺识别复杂歌曲。\n原始录音保存在本机，最长支持 5 分钟转谱。").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(5)

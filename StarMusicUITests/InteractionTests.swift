@@ -70,7 +70,7 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["track.addImport"].exists)
         capture("Track-Chooser")
         app.buttons["track.addBlank"].tap()
-        XCTAssertTrue(app.buttons["编辑 新声部 2 的音符"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["编辑 声音 2 的音符"].waitForExistence(timeout: 5))
         capture("Tracks-Standard")
         app.swipeDown()
         app.buttons["studio.modeMenu"].tap()
@@ -92,6 +92,32 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.textFields["model.identifier"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "无法保存或读取设备密钥")).firstMatch.exists)
         capture("Model-Settings")
+    }
+
+    func testSimpleMelodyAndKeyShiftUsePlainLanguage() {
+        let app = launch()
+        app.buttons["home.start"].tap(); app.buttons["start.blank"].tap()
+        XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 8))
+        app.buttons["studio.modeMenu"].tap(); app.buttons["普通模式"].tap()
+        XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "BPM")).firstMatch.exists)
+        app.buttons["editor.addNote"].tap()
+        app.otherElements["editor.melody"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        app.buttons["editor.keyShift"].tap()
+        XCTAssertTrue(app.buttons["key.higher"].waitForExistence(timeout: 5)); app.buttons["key.higher"].tap()
+        XCTAssertTrue(app.staticTexts["比原来高 1 点"].exists)
+        capture("Key-Shift-Plain")
+        app.buttons["key.preview"].tap(); app.buttons["key.apply"].tap()
+        XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 5))
+        app.swipeDown(); app.buttons["studio.modeMenu"].tap(); app.buttons["简洁模式"].tap()
+        XCTAssertFalse(app.buttons["recognition.engine"].exists)
+        XCTAssertFalse(app.staticTexts["4/4 拍"].exists)
+        XCTAssertFalse(app.buttons["editor.addTrack"].exists)
+        capture("Melody-Simple")
+        app.buttons["展开更多工具"].tap()
+        XCTAssertTrue(app.buttons["editor.addTrack"].exists)
+        app.swipeDown(); app.buttons["studio.modeMenu"].tap(); app.buttons["普通模式"].tap()
+        capture("Melody-Standard")
     }
 
 }

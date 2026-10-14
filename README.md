@@ -22,7 +22,7 @@
 
 v0.4.0 build 5 已实际通过 macOS 15 / Xcode 16.4 编译、20 项 XCTest 与 4 项原生界面测试，Release 模拟器和 arm64 iPhoneOS 构建均成功。已下载核验原始 IPA、完整编译模型、无签名状态及校验值，并逐帧检查启动过渡、深浅色首页、模式和模型设置页。详见 [原生验证记录](NATIVE-VERIFICATION.md)。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
 
-私有仓库：https://github.com/JLjingluo/star-music-ios 。Direct IPA Download 工作流在成功构建后直接发布 `.ipa`，没有额外 ZIP 包装。未签名包需有效 Apple 签名才能安装。
+公开仓库：https://github.com/JLjingluo/star-music-ios 。Direct IPA Download 工作流在成功构建后直接发布 `.ipa`，没有额外 ZIP 包装。未签名包需有效 Apple 签名才能安装。
 
 ## 在 Mac 上打开
 
@@ -39,7 +39,7 @@ open StarMusic.xcodeproj
 
 ## GitHub 模拟器构建
 
-将此目录上传到私有 GitHub 仓库的根目录。推送 `main` 分支会触发 **iOS Build and Test**；也可在 Actions 中手动 Run workflow。
+仓库已按用户要求设为公开。推送 `main` 分支会触发 **iOS Build and Test**；也可在 Actions 中手动 Run workflow。
 
 构建顺序：生成 Xcode 工程 → 在模拟器上运行音乐/草稿测试 → 编译 Release 模拟器应用及未签名真机 IPA → 上传 `StarMusic-Simulator` artifact 和测试结果。
 
@@ -99,4 +99,12 @@ base64 -i StarMusic.mobileprovision | tr -d '\n' | pbcopy
 
 [直接下载 v0.4.0 build 5 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.4.0-unsigned-build-38608702962/StarMusic-Unsigned.ipa)（42,268,081 字节，无额外 ZIP）。
 
-未签名；安装前需要有效的 Apple 签名。私有仓库下载需要有访问权限的 GitHub 登录。
+未签名；安装前需要有效的 Apple 签名。仓库公开，IPA 可直接下载。
+
+## v0.5 开发中的改进
+
+普通与简洁模式以高低旋律图、直白说明和明显的换调入口呈现；专业模式保留五线谱、速度与调号。换调保持音符顺序、相互间隔和节奏，原录音不变，试听切换为乐器演奏，可撤销。
+
+本地识别加入多个音高候选的时序解码、YIN 交叉支持、轻微稳定偏音校正及基于声音强弱的停顿/同音分段。准确性用固定 HumTrans 小样本对照上一版，不等于完整数据集或商业产品排名。
+
+原生测试准备：创建 Python 虚拟环境、安装 `remotezip==0.12.3`，运行 `python scripts/fetch-humming-benchmark.py StarMusicTests/BenchmarkSamples`，再 `xcodegen generate`。HumTrans 录音仅用于非商业研究评测，不提交到仓库、不打入 App；许可与来源写入下载清单。完整 App 模型仍为 MIT 授权 CREPE。

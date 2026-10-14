@@ -15,26 +15,32 @@ final class NeuralPitchDetector {
         inputName = input; outputName = output
     }
     func detect(_ samples: ArraySlice<Float>) throws -> (midi: Double, confidence: Double)? {
-        guard samples.count == 1024 else { return nil }
+        guard let first = try candidates(samples).first, first.confidence >= 0.45 else { return nil }
+        return (first.midi, first.confidence)
+    }
+    func candidates(_ samples: ArraySlice<Float>) throws -> [PitchCandidate] {
+        guard samples.count == 1024 else { return [] }
         let data = Array(samples), mean = data.reduce(0.0) { $0 + Double($1) } / 1024
         let variance = data.reduce(0.0) { $0 + pow(Double($1) - mean, 2) } / 1024
         let deviation = sqrt(variance)
-        guard deviation > 0.0025 else { return nil }
+        guard deviation > 0.0025 else { return [] }
         let input = try MLMultiArray(shape: [1, 1024], dataType: .float32)
         for index in data.indices { input[index] = NSNumber(value: (Double(data[index]) - mean) / deviation) }
         let provider = try MLDictionaryFeatureProvider(dictionary: [inputName: input])
         let prediction = try model.prediction(from: provider)
         guard let salience = prediction.featureValue(for: outputName)?.multiArrayValue, salience.count == 360 else { throw RecognitionError.modelMissing }
-        var center = 0, confidence = 0.0
-        for bin in 0..<360 { let value = salience[bin].doubleValue; if value > confidence { confidence = value; center = bin } }
-        guard confidence >= 0.45 else { return nil }
-        var sum = 0.0, weight = 0.0
-        for bin in max(0, center - 4)...min(359, center + 4) {
-            let value = salience[bin].doubleValue
-            sum += value * (1997.3794084376191 + Double(bin) * 20); weight += value
+        let values = (0..<360).map { salience[$0].doubleValue }
+        let peaks = (0..<360).filter { bin in values[bin] >= 0.08 && (bin == 0 || values[bin] >= values[bin - 1]) && (bin == 359 || values[bin] > values[bin + 1]) }.sorted { values[$0] > values[$1] }
+        guard let first = peaks.first, values[first] >= 0.35 else { return [] }
+        var result: [PitchCandidate] = []
+        for center in peaks {
+            var sum = 0.0, weight = 0.0
+            for bin in max(0, center - 4)...min(359, center + 4) { sum += values[bin] * (1997.3794084376191 + Double(bin) * 20); weight += values[bin] }
+            guard weight > 0 else { continue }
+            let midi = 69 + 12 * log2(10 * pow(2, sum / weight / 1200) / 440)
+            if !result.contains(where: { abs($0.midi - midi) < 0.65 }) { result.append(PitchCandidate(midi: midi, confidence: values[center])) }
+            if result.count == 6 { break }
         }
-        guard weight > 0 else { return nil }
-        let hz = 10 * pow(2, sum / weight / 1200)
-        return (69 + 12 * log2(hz / 440), confidence)
+        return result
     }
 }

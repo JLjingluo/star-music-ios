@@ -66,13 +66,42 @@ enum PitchAnalyzer {
         let hop = max(1, Int(sampleRate * 0.02)), half = size / 2
         let padded = [Float](repeating: 0, count: half) + data + [Float](repeating: 0, count: size - half)
         let total = Double(data.count) / sampleRate
-        var frames: [Frame] = []
+        var measurements: [PitchFrame] = []
         for i in stride(from: 0, to: data.count, by: hop) {
             try Task.checkCancellation()
             let window = padded[i..<(i + size)]
-            let pitch = try neural?.detect(window) ?? (neural == nil ? estimate(window, rate: sampleRate) : nil)
-            frames.append(Frame(time: Double(i) / sampleRate, midi: pitch?.midi, confidence: pitch?.confidence ?? 0))
+            let low = max(0, i - hop / 2), high = min(data.count, i + hop / 2)
+            let energy = sqrt(data[low..<high].reduce(0.0) { $0 + Double($1) * Double($1) } / Double(max(1, high - low)))
+            var candidates: [PitchCandidate] = []
+            if energy > 0.0025 {
+                if let neural {
+                    candidates = try neural.candidates(window)
+                    let yinSize = max(1024, Int(sampleRate * 0.096)), yinHalf = yinSize / 2
+                    let a = max(0, i - yinHalf), b = min(data.count, i + yinHalf)
+                    if let yin = estimate(data[a..<b], rate: sampleRate), yin.confidence > 0.85 {
+                        if let match = candidates.firstIndex(where: { abs($0.midi - yin.midi) < 0.65 }) {
+                            candidates[match].confidence = min(0.99, candidates[match].confidence + 0.12)
+                        } else if (candidates.first?.confidence ?? 0) < 0.65 {
+                            candidates.append(PitchCandidate(midi: yin.midi, confidence: yin.confidence * 0.55))
+                        }
+                    }
+                } else if let pitch = estimate(window, rate: sampleRate) {
+                    candidates = [PitchCandidate(midi: pitch.midi, confidence: pitch.confidence)]
+                }
+            }
+            measurements.append(PitchFrame(time: Double(i) / sampleRate, candidates: candidates, energy: energy))
         }
+        let sortedEnergy = measurements.map(\.energy).sorted()
+        if let maximumEnergy = sortedEnergy.last, maximumEnergy > 0 {
+            let floor = sortedEnergy[sortedEnergy.count / 10]
+            if floor < maximumEnergy * 0.20 {
+                let gate = max(0.0025, min(maximumEnergy * 0.06, floor * 2.5))
+                for i in measurements.indices where measurements[i].energy < gate { measurements[i].candidates = [] }
+            }
+        }
+        let decoded = try PitchSequenceDecoder.decode(measurements)
+        let tuning = PitchSequenceDecoder.tuningOffset(decoded)
+        var frames = measurements.indices.map { i in Frame(time: measurements[i].time, midi: decoded[i].map { $0.midi - tuning }, confidence: decoded[i]?.confidence ?? 0) }
         // Reject isolated semitone/octave spikes without smoothing away real sustained changes.
         let original = frames
         if frames.count > 2 {
@@ -91,11 +120,17 @@ enum PitchAnalyzer {
             let start = note.start * bpm / 60, duration = (note.end - note.start) * bpm / 60
             result.append(MusicNote(midi: note.midi, start: free ? start : (start * 4).rounded() / 4, duration: free ? duration : max(0.25, (duration * 4).rounded() / 4), confidence: note.confidence, rawStart: note.start, rawDuration: note.end - note.start))
         }
-        for frame in frames {
+        for (index, frame) in frames.enumerated() {
             let end = min(total, frame.time + Double(hop) / sampleRate)
             guard let pitch = frame.midi else { flush(); active = nil; pending = nil; continue }
             let midi = Int(pitch.rounded())
             if let note = active, abs(pitch - Double(note.midi)) <= 0.65 {
+                if index >= 2, frame.time - note.start > 0.14,
+                   measurements[index - 1].energy < measurements[index - 2].energy * 0.40,
+                   measurements[index].energy > measurements[index - 1].energy * 2 {
+                    active?.end = frames[index - 1].time; flush()
+                    active = (midi, frames[index - 1].time, end, frame.confidence); pending = nil; continue
+                }
                 active?.end = end; active?.confidence = min(note.confidence, frame.confidence); pending = nil
             } else if active == nil {
                 active = (midi, frame.time, end, frame.confidence); pending = nil

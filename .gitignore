@@ -8,3 +8,5 @@ artifacts/
 *.mobileprovision
 *.keychain-db
 .env
+
+StarMusicTests/BenchmarkSamples/

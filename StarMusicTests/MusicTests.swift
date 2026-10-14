@@ -248,6 +248,81 @@ final class MusicTests: XCTestCase {
         catch RecognitionError.service(let status) { XCTAssertEqual(status, 401) }
     }
 
+    func testSequenceDecoderRejectsBriefOctaveMistakeButKeepsRealLeap() throws {
+        let frames = (0..<30).map { i in PitchFrame(time: Double(i) * 0.02, candidates: i == 8 ? [PitchCandidate(midi: 81, confidence: 0.95), PitchCandidate(midi: 69, confidence: 0.50)] : [PitchCandidate(midi: i >= 20 ? 81 : 69, confidence: 0.9)], energy: 0.1) }
+        let result = try PitchSequenceDecoder.decode(frames)
+        XCTAssertEqual(result[8]?.midi, 69)
+        XCTAssertEqual(result[25]?.midi, 81)
+    }
+    func testTuningOffsetOnlyCorrectsConsistentSmallDetuning() {
+        let stable = (0..<40).map { PitchCandidate(midi: Double(60 + $0 % 5) + 0.22, confidence: 0.9) as PitchCandidate? }
+        XCTAssertEqual(PitchSequenceDecoder.tuningOffset(stable), 0.22, accuracy: 0.001)
+        XCTAssertEqual(PitchSequenceDecoder.tuningOffset([PitchCandidate(midi: 60.2, confidence: 0.9)]), 0)
+    }
+    func testRepeatedSamePitchIsSeparatedByBreath() throws {
+        let signal = (0..<24000).map { i -> Float in
+            let t = Double(i) / 16000
+            if t >= 0.70 && t < 0.75 { return 0 }
+            return Float(0.2 * sin(2 * Double.pi * 440 * t))
+        }
+        let notes = try PitchAnalyzer.analyze(signal, sampleRate: 16000, bpm: 120, free: true)
+        XCTAssertEqual(notes.compactMap(\.midi), [69, 69])
+    }
+    @MainActor func testWholeSongKeyShiftPreservesIntervalsTimingOriginalAndUndo() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root)
+        var p = MusicProject(); p.tracks[0].notes = [MusicNote(midi: 60, start: 0.13, duration: 0.8), MusicNote(midi: 67, start: 1.1, duration: 0.7), MusicNote(midi: nil, start: 1.8, duration: 0.2)]
+        p.tracks[0].recordingFile = "original.wav"; p.tracks[0].useOriginalAudio = true
+        p.tracks.append(MusicTrack(name: "Bass", notes: [MusicNote(midi: 48, start: 0, duration: 2)]))
+        let shifted = try MelodyTransform.shifted(p, steps: 3)
+        XCTAssertEqual(shifted.tracks[0].notes.map(\.midi), [63, 70, nil]); XCTAssertEqual(shifted.tracks[1].notes.first?.midi, 51)
+        XCTAssertEqual(shifted.tracks[0].notes.map(\.start), p.tracks[0].notes.map(\.start)); XCTAssertEqual(shifted.tracks[0].notes.map(\.duration), p.tracks[0].notes.map(\.duration)); XCTAssertEqual(shifted.tracks[0].recordingFile, p.tracks[0].recordingFile)
+        XCTAssertEqual(shifted.bpm, p.bpm); XCTAssertEqual(shifted.tracks[0].useOriginalAudio, false)
+        let session = EditorSession(p, store: store); session.edit { $0 = shifted }; session.undo(); XCTAssertEqual(session.project.tracks, p.tracks)
+        session.redo(); XCTAssertEqual(session.project.tracks, shifted.tracks)
+    }
+    func testKeyShiftRejectsOutOfRangeInsteadOfClippingIntervals() throws {
+        var p = MusicProject(); p.tracks[0].notes = [MusicNote(midi: 126, start: 0, duration: 1)]
+        XCTAssertThrowsError(try MelodyTransform.shifted(p, steps: 3))
+        XCTAssertEqual(try MelodyTransform.shifted(p, steps: -2).tracks[0].notes.first?.midi, 124)
+    }
+
+    func testRealHummingValidationSubsetReportsBaselineAndCurrent() throws {
+        struct Manifest: Decodable { struct Item: Decodable { var key: String; var audio: String; var midi: String }; var cases: [Item] }
+        let bundle = Bundle(for: MusicTests.self)
+        let manifestURL = try XCTUnwrap(bundle.url(forResource: "humtrans-cases", withExtension: "json"), "Prepare benchmark resources before XcodeGen")
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+        var report: [[String: Any]] = []; var oldCorrect = 0, newCorrect = 0, total = 0
+        for item in manifest.cases {
+            let audioURL = try XCTUnwrap(bundle.url(forResource: item.audio, withExtension: nil))
+            let midiURL = try XCTUnwrap(bundle.url(forResource: item.midi, withExtension: nil))
+            let source = try AudioController.samples(from: audioURL)
+            let clip = Array(source.samples.prefix(Int(source.sampleRate * 6)))
+            let samples = try AudioController.resample(clip, from: source.sampleRate, to: 16000)
+            let truth = try MIDI.parse(Data(contentsOf: midiURL))
+            let baseline = try LegacyPitchBenchmark.analyze(samples, sampleRate: 16000, bpm: truth.bpm, free: true, engine: .neural)
+            let current = try PitchAnalyzer.analyze(samples, sampleRate: 16000, bpm: truth.bpm, free: true, engine: .neural)
+            let reference = truth.tracks.flatMap(\.notes).filter { $0.midi != nil }
+            func pitch(_ notes: [MusicNote], _ time: Double) -> Int? { notes.first { ($0.rawStart ?? $0.start * 60 / truth.bpm) <= time && ($0.rawStart ?? $0.start * 60 / truth.bpm) + ($0.rawDuration ?? $0.duration * 60 / truth.bpm) > time }?.midi }
+            var before = 0, after = 0, count = 0
+            for frame in 0..<300 {
+                let time = Double(frame) * 0.02
+                guard let expected = pitch(reference, time) else { continue }
+                count += 1; if pitch(baseline, time) == expected { before += 1 }; if pitch(current, time) == expected { after += 1 }
+            }
+            oldCorrect += before; newCorrect += after; total += count
+            report.append(["key": item.key,"voicedReferenceFrames":count,"baselineCorrect":before,"currentCorrect":after,"baselineNotes":baseline.filter { $0.midi != nil }.count,"currentNotes":current.filter { $0.midi != nil }.count])
+        }
+        XCTAssertGreaterThan(total, 100)
+        // This is a regression comparison on a fixed four-recording subset, not an industry ranking.
+        XCTAssertGreaterThanOrEqual(Double(newCorrect) / Double(total), Double(oldCorrect) / Double(total))
+        let json: [String: Any] = ["dataset":"HumTrans validation, fixed four singers, first 6 seconds each","source":"https://github.com/shansongliu/HumTrans","baseline":"v0.4.0 max-bin and local segmentation","current":"candidate sequence and energy segmentation","baselinePitchAccuracy":Double(oldCorrect) / Double(total),"currentPitchAccuracy":Double(newCorrect) / Double(total),"referenceVoicedFrames":total,"cases":report,"limits":"Small validation subset; no claim of parity with commercial products. Annotation timing can affect scores."]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted,.sortedKeys]), uniformTypeIdentifier: "public.json")
+        attachment.name = "Humming-Accuracy"; attachment.lifetime = .keepAlways; add(attachment)
+        print("HUMMING_BENCHMARK baseline=\(oldCorrect)/\(total) current=\(newCorrect)/\(total)")
+    }
+
 }
 
 final class AudioAPIStub: URLProtocol {
@@ -263,4 +338,73 @@ final class AudioAPIStub: URLProtocol {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() {}
+}
+
+private enum LegacyPitchBenchmark {
+    private struct Frame {
+        var time: Double
+        var midi: Double?
+        var confidence: Double
+    }
+    static func analyze(_ data: [Float], sampleRate: Double, bpm: Double, free: Bool, engine: RecognitionEngine = .yin) throws -> [MusicNote] {
+        guard data.count >= 512, sampleRate.isFinite, sampleRate > 0, bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.noNotes }
+        let neural = engine == .neural ? try NeuralPitchDetector() : nil
+        guard neural == nil || abs(sampleRate - 16000) < 1 else { throw RecognitionError.configuration("本地 AI 需要 16 kHz 输入。") }
+        let size = neural == nil ? max(1024, Int(sampleRate * 0.096)) : 1024
+        let hop = max(1, Int(sampleRate * 0.02)), half = size / 2
+        let padded = [Float](repeating: 0, count: half) + data + [Float](repeating: 0, count: size - half)
+        let total = Double(data.count) / sampleRate
+        var frames: [Frame] = []
+        for i in stride(from: 0, to: data.count, by: hop) {
+            try Task.checkCancellation()
+            let window = padded[i..<(i + size)]
+            let pitch = try neural?.detect(window) ?? (neural == nil ? PitchAnalyzer.estimate(window, rate: sampleRate) : nil)
+            frames.append(Frame(time: Double(i) / sampleRate, midi: pitch?.midi, confidence: pitch?.confidence ?? 0))
+        }
+        // Reject isolated semitone/octave spikes without smoothing away real sustained changes.
+        let original = frames
+        if frames.count > 2 {
+            for i in 1..<(frames.count - 1) {
+                if let a = original[i - 1].midi, let b = original[i + 1].midi, abs(a - b) < 0.45,
+                   let current = original[i].midi, abs(current - (a + b) / 2) > 0.65 {
+                    frames[i].midi = (a + b) / 2; frames[i].confidence = min(min(original[i - 1].confidence, original[i + 1].confidence), 0.79)
+                }
+            }
+        }
+        var result: [MusicNote] = []
+        var active: (midi: Int, start: Double, end: Double, confidence: Double)?
+        var pending: (midi: Int, start: Double, confidence: Double, count: Int)?
+        func flush() {
+            guard let note = active, note.end - note.start >= 0.06 else { return }
+            let start = note.start * bpm / 60, duration = (note.end - note.start) * bpm / 60
+            result.append(MusicNote(midi: note.midi, start: free ? start : (start * 4).rounded() / 4, duration: free ? duration : max(0.25, (duration * 4).rounded() / 4), confidence: note.confidence, rawStart: note.start, rawDuration: note.end - note.start))
+        }
+        for frame in frames {
+            let end = min(total, frame.time + Double(hop) / sampleRate)
+            guard let pitch = frame.midi else { flush(); active = nil; pending = nil; continue }
+            let midi = Int(pitch.rounded())
+            if let note = active, abs(pitch - Double(note.midi)) <= 0.65 {
+                active?.end = end; active?.confidence = min(note.confidence, frame.confidence); pending = nil
+            } else if active == nil {
+                active = (midi, frame.time, end, frame.confidence); pending = nil
+            } else {
+                if var candidate = pending, candidate.midi == midi { candidate.count += 1; candidate.confidence = min(candidate.confidence, frame.confidence); pending = candidate }
+                else { pending = (midi, frame.time, frame.confidence, 1) }
+                if let candidate = pending, candidate.count >= 2 {
+                    active?.end = candidate.start; flush(); active = (candidate.midi, candidate.start, end, candidate.confidence); pending = nil
+                }
+            }
+        }
+        flush(); guard !result.isEmpty else { throw MusicError.noNotes }
+        // Preserve meaningful silence as actual rests, leaving free timing unquantized.
+        var withRests: [MusicNote] = []
+        for note in result {
+            if let previous = withRests.last {
+                let gapStart = previous.start + previous.duration, gap = note.start - gapStart
+                if gap * 60 / bpm >= 0.09 { withRests.append(MusicNote(midi: nil, start: gapStart, duration: gap, rawStart: gapStart * 60 / bpm, rawDuration: gap * 60 / bpm)) }
+            }
+            withRests.append(note)
+        }
+        return withRests
+    }
 }

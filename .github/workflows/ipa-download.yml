@@ -21,12 +21,12 @@ jobs:
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id }}
     steps:
-      - name: Validate source build and preserve private access
+      - name: Validate source build and public repository
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(gh api "repos/$GH_REPO" --jq '.private')" != true ]; then
-            printf 'This workflow expects an owner-private repository.\n' >&2
+          if [ "$(gh api "repos/$GH_REPO" --jq '.private')" != false ]; then
+            printf 'This workflow expects the owner-authorized public repository.\n' >&2
             exit 1
           fi
           if [ "$(gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')" != success ]; then
@@ -82,7 +82,7 @@ jobs:
                   shutil.copy2(source,target/('UI-'+source.name))
           print('Native interface capture files:',len(list(target.iterdir())))
           PY
-      - name: Attach the IPA directly to a private repository release
+      - name: Attach the IPA directly to a public repository release
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +96,7 @@ jobs:
           下载 StarMusic-Unsigned.ipa 即可获取应用包，没有额外的 ZIP 包装。
           此包尚未签名，安装到 iPhone 前需要有效的 Apple 签名。
           云端构建包含音乐与存储测试、原生界面流程测试及深浅色预览。录音及系统音频中断行为仍需实机验证。
-          仓库保持私有，下载需要有访问权限的 GitHub 登录。
+          仓库已按用户要求公开，原始 IPA 可直接下载。
           NOTES
           UI_ASSETS=()
           while IFS= read -r -d '' file; do UI_ASSETS+=("$file"); done < <(find previews/ui-release -type f -print0)

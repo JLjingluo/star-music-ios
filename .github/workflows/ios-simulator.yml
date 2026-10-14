@@ -21,6 +21,11 @@ jobs:
             sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           fi
           xcodebuild -version
+      - name: Prepare real humming evaluation samples
+        run: |
+          python3 -m venv "$RUNNER_TEMP/humming-benchmark-env"
+          "$RUNNER_TEMP/humming-benchmark-env/bin/pip" install remotezip==0.12.3
+          "$RUNNER_TEMP/humming-benchmark-env/bin/python" scripts/fetch-humming-benchmark.py StarMusicTests/BenchmarkSamples
       - name: Generate Xcode project
         run: |
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi

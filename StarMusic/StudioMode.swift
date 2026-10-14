@@ -5,8 +5,8 @@ enum StudioMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { switch self { case .simple: "简洁"; case .standard: "普通"; case .professional: "专业" } }
     var detail: String { switch self {
-    case .simple: "专注录唱、音符和试听；更多工具随时展开。"
-    case .standard: "常用写谱、校正和配器，保持清晰的创作流程。"
+    case .simple: "只留下录唱、试听和换调，其他工具需要时再打开。"
+    case .standard: "用直白说明修改旋律、添加声音，无需先懂乐理。"
     case .professional: "展开多轨、来源音频、时间定位和识别引擎。"
     } }
 }
