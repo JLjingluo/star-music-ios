@@ -90,6 +90,7 @@ final class InteractionTests: XCTestCase {
         app.buttons["tab.profile"].tap()
         app.cells.containing(.staticText, identifier: "识谱与我的模型").firstMatch.tap()
         XCTAssertTrue(app.textFields["model.identifier"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "无法保存或读取设备密钥")).firstMatch.exists)
         capture("Model-Settings")
     }
 

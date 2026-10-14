@@ -8,7 +8,7 @@ settings:
   base:
     SWIFT_VERSION: '5.0'
     MARKETING_VERSION: '0.4.0'
-    CURRENT_PROJECT_VERSION: '4'
+    CURRENT_PROJECT_VERSION: '5'
     DEVELOPMENT_TEAM: ''
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     CODE_SIGN_STYLE: Automatic
@@ -25,6 +25,8 @@ targets:
         INFOPLIST_FILE: StarMusic/Info.plist
         TARGETED_DEVICE_FAMILY: '1,2'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        'CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]': StarMusic/Simulator.entitlements
+        'CODE_SIGN_IDENTITY[sdk=iphonesimulator*]': '-'
     scheme:
       testTargets:
         - StarMusicTests

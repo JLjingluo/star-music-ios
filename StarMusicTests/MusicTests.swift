@@ -155,6 +155,15 @@ final class MusicTests: XCTestCase {
         XCTAssertThrowsError(try CloudRecognitionClient.decode("{\"notes\":[]}", duration: 1, bpm: 120, free: true))
         XCTAssertThrowsError(try CloudRecognitionClient.decode(valid, duration: 0.2, bpm: 120, free: true))
     }
+    func testDeviceKeychainRoundTripAndRemoval() throws {
+        let previous = try ModelKeychain.read()
+        defer { try? ModelKeychain.save(previous) }
+        let fixture = "native-test-" + UUID().uuidString
+        try ModelKeychain.save(fixture)
+        XCTAssertEqual(try ModelKeychain.read(), fixture)
+        try ModelKeychain.save("")
+        XCTAssertEqual(try ModelKeychain.read(), "")
+    }
     @MainActor func testAllTrackOriginalsAndHistorySurviveCopyAndPackage() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
