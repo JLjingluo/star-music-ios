@@ -1,4 +1,4 @@
-# Star Music iOS · v0.4.0
+# Star Music iOS · v0.5.0
 
 原生 SwiftUI + AVFoundation，支持 iOS 17 及以上 iPhone / iPad。离线录音、乐谱编辑、逐轨编曲与草稿保存使用同一份项目数据。
 
@@ -20,7 +20,7 @@
 
 本轮代码附带模型推理、YIN 谐波/颤音分段、重采样、云端请求与失败处理、多轨原声复制/项目包迁移、共享音频时间线、撤销以及原生 UI 流程测试。必须以当前提交的 GitHub Actions 结果为准；源码语法检查不代表 Xcode 编译通过。
 
-v0.4.0 build 5 已实际通过 macOS 15 / Xcode 16.4 编译、20 项 XCTest 与 4 项原生界面测试，Release 模拟器和 arm64 iPhoneOS 构建均成功。已下载核验原始 IPA、完整编译模型、无签名状态及校验值，并逐帧检查启动过渡、深浅色首页、模式和模型设置页。详见 [原生验证记录](NATIVE-VERIFICATION.md)。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
+v0.5.0 build 6 已实际通过 macOS 15 / Xcode 16.4 编译、27 项 XCTest 与 5 项原生界面测试，Release 模拟器和 arm64 iPhoneOS 构建均成功。已下载核验原始 IPA、完整编译模型、无签名状态及校验值，并检查启动过渡、深浅色首页、三种模式和换调页。详见 [本轮原生验证记录](NATIVE-VERIFICATION-v0.5.md)，[v0.4 历史记录](NATIVE-VERIFICATION.md) 保留此前模型设置与 Keychain 验证。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
 
 公开仓库：https://github.com/JLjingluo/star-music-ios 。Direct IPA Download 工作流在成功构建后直接发布 `.ipa`，没有额外 ZIP 包装。未签名包需有效 Apple 签名才能安装。
 
@@ -97,14 +97,19 @@ base64 -i StarMusic.mobileprovision | tr -d '\n' | pbcopy
 
 ## 本轮 IPA 直链
 
-[直接下载 v0.4.0 build 5 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.4.0-unsigned-build-38608702962/StarMusic-Unsigned.ipa)（42,268,081 字节，无额外 ZIP）。
+[直接下载 v0.5.0 build 6 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.5.0-unsigned-build-38657962915/StarMusic-Unsigned.ipa)（42,356,591 字节，无额外 ZIP）。
 
-未签名；安装前需要有效的 Apple 签名。仓库公开，IPA 可直接下载。
+未签名；安装前需要有效的 Apple 签名。仓库公开，IPA 已实际通过匿名下载检查。
 
-## v0.5 开发中的改进
+## v0.5 已验证的改进
 
-普通与简洁模式以高低旋律图、直白说明和明显的换调入口呈现；专业模式保留五线谱、速度与调号。换调保持音符顺序、相互间隔和节奏，原录音不变，试听切换为乐器演奏，可撤销。
+- 简洁模式收起次要工具；普通模式使用高低旋律图、直白说明和「换个调」。BPM、调号与五线谱留给专业模式。
+- 整首升降调先试听再应用，保持相对音程、顺序与节奏；原始录音保留，可撤销，越界时拒绝处理而不是截断音符。
+- 完整 CREPE 模型保留，新增候选时序解码、YIN 交叉支持、整段稳定音高定音、呼吸/同音分段与轻声输入处理。
+- 27 项单元测试、5 项原生界面测试通过；已实际编译 Release 模拟器与 arm64 iPhoneOS，并下载核验 IPA 及原生预览。
 
-本地识别加入多个音高候选的时序解码、YIN 交叉支持、轻微稳定偏音校正及基于声音强弱的停顿/同音分段。准确性用固定 HumTrans 小样本对照上一版，不等于完整数据集或商业产品排名。
+真人小样本中旋律序列编辑距离 17→13；降低音量的录音片段恢复出约 5.06 秒有音高内容，旧版约 0.14 秒。其他时间对齐指标并非全部改善；这不构成与一流产品等同的证据。完整指标、样本和限制见 [v0.5 原生验证记录](NATIVE-VERIFICATION-v0.5.md)。
 
-原生测试准备：创建 Python 虚拟环境、安装 `remotezip==0.12.3`，运行 `python scripts/fetch-humming-benchmark.py StarMusicTests/BenchmarkSamples`，再 `xcodegen generate`。HumTrans 录音仅用于非商业研究评测，不提交到仓库、不打入 App；许可与来源写入下载清单。完整 App 模型仍为 MIT 授权 CREPE。
+原生测试准备：创建 Python 虚拟环境、安装 `remotezip==0.12.3`，运行 `python scripts/fetch-humming-benchmark.py StarMusicTests/BenchmarkSamples`，再 `xcodegen generate`。HumTrans 录音仅用于非商业研究评测，不提交到仓库、不打入 App；许可与来源写入下载清单。
+
+仓库现为公开；[标准 GitHub 托管构建运行免费](https://docs.github.com/en/billing/concepts/product-billing/github-actions)。临时附件仍受存储额度约束；正式 IPA 和预览保留在 Release。
