@@ -49,23 +49,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app artifacts/StarMusic-Simulator.zip
           cp README.md artifacts/README.md
       - name: Capture native app preview
-        run: |
-          xcrun simctl bootstatus "$SIMULATOR_ID" -b
-          xcrun simctl install "$SIMULATOR_ID" build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app
-          xcrun simctl terminate "$SIMULATOR_ID" music.star.starmusic || true
-          xcrun simctl status_bar "$SIMULATOR_ID" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
-          xcrun simctl io "$SIMULATOR_ID" recordVideo --codec=h264 artifacts/StarMusic-Entrance.mp4 &
-          CAPTURE_PID=$!
-          sleep 1
-          xcrun simctl launch "$SIMULATOR_ID" music.star.starmusic -appearance dark
-          sleep 3
-          xcrun simctl io "$SIMULATOR_ID" screenshot artifacts/StarMusic-Home.png
-          kill -INT "$CAPTURE_PID"
-          wait "$CAPTURE_PID"
-          xcrun simctl terminate "$SIMULATOR_ID" music.star.starmusic
-          xcrun simctl launch "$SIMULATOR_ID" music.star.starmusic -appearance light
-          sleep 2
-          xcrun simctl io "$SIMULATOR_ID" screenshot artifacts/StarMusic-Home-Light.png
+        run: python3 scripts/capture-native-preview.py
       - name: Build unsigned device IPA
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO

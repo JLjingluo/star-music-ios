@@ -288,6 +288,15 @@ final class MusicTests: XCTestCase {
         XCTAssertEqual(try MelodyTransform.shifted(p, steps: -2).tracks[0].notes.first?.midi, 124)
     }
 
+    func testVeryQuietMelodyIsRecognizedWithoutChangingSource() throws {
+        let source = (0..<16000).map { Float(0.0006 * sin(2 * Double.pi * 440 * Double($0) / 16000)) }
+        let copy = source
+        let notes = try PitchAnalyzer.analyze(source, sampleRate: 16000, bpm: 120, free: true, engine: .neural)
+        XCTAssertEqual(notes.compactMap(\.midi), [69])
+        XCTAssertEqual(source, copy)
+        XCTAssertThrowsError(try LegacyPitchBenchmark.analyze(source, sampleRate: 16000, bpm: 120, free: true, engine: .neural))
+        XCTAssertThrowsError(try PitchAnalyzer.analyze(Array(repeating: 0, count: 16000), sampleRate: 16000, bpm: 120, free: true, engine: .neural))
+    }
     func testRealHummingValidationSubsetReportsBaselineAndCurrent() throws {
         struct Manifest: Decodable { struct Item: Decodable { var key: String; var audio: String; var midi: String }; var cases: [Item] }
         let bundle = Bundle(for: MusicTests.self)
@@ -329,10 +338,21 @@ final class MusicTests: XCTestCase {
             report.append(["key": item.key,"voicedReferenceFrames":count,"baselineCorrect":before,"currentCorrect":after,"baselinePitchClassCorrect":beforeChroma,"currentPitchClassCorrect":afterChroma,"baselineSequenceEdits":beforeEdits,"currentSequenceEdits":afterEdits,"baselineNotes":baseline.filter { $0.midi != nil }.count,"currentNotes":current.filter { $0.midi != nil }.count])
         }
         XCTAssertGreaterThan(total, 100)
+        let first = try XCTUnwrap(manifest.cases.first)
+        let quietURL = try XCTUnwrap(bundle.url(forResource: first.audio, withExtension: nil))
+        let quietData = try AudioController.samples(from: quietURL)
+        let quietInput = Array(quietData.samples.prefix(Int(quietData.sampleRate * 6))).map { Float((Double($0) * 0.01 * 32767).rounded() / 32767) }
+        let quietSamples = try AudioController.resample(quietInput, from: quietData.sampleRate, to: 16000)
+        let quietBaseline = (try? LegacyPitchBenchmark.analyze(quietSamples, sampleRate: 16000, bpm: 120, free: true, engine: .neural)) ?? []
+        let quietCurrent = try PitchAnalyzer.analyze(quietSamples, sampleRate: 16000, bpm: 120, free: true, engine: .neural)
+        XCTAssertFalse(quietCurrent.isEmpty)
+        let oldQuietDuration = quietBaseline.filter { $0.midi != nil }.reduce(0.0) { $0 + ($1.rawDuration ?? $1.duration * 0.5) }
+        let newQuietDuration = quietCurrent.filter { $0.midi != nil }.reduce(0.0) { $0 + ($1.rawDuration ?? $1.duration * 0.5) }
+        XCTAssertGreaterThan(newQuietDuration, oldQuietDuration)
         // This is a regression comparison on a fixed four-recording subset, not an industry ranking.
         XCTAssertGreaterThanOrEqual(newCorrect, oldCorrect)
         XCTAssertLessThanOrEqual(newEdits, oldEdits)
-        let json: [String: Any] = ["dataset":"HumTrans validation, fixed four singers, first 6 seconds each","source":"https://github.com/shansongliu/HumTrans","baseline":"v0.4.0 max-bin and local segmentation","current":"candidate sequence and energy segmentation","baselinePitchAccuracy":Double(oldCorrect) / Double(total),"currentPitchAccuracy":Double(newCorrect) / Double(total),"baselinePitchClassAccuracy":Double(oldChroma) / Double(total),"currentPitchClassAccuracy":Double(newChroma) / Double(total),"baselineSequenceEdits":oldEdits,"currentSequenceEdits":newEdits,"referenceVoicedFrames":total,"cases":report,"limits":"Small validation subset; no claim of parity with commercial products. Annotation timing can affect scores."]
+        let json: [String: Any] = ["dataset":"HumTrans validation, fixed four singers, first 6 seconds each","source":"https://github.com/shansongliu/HumTrans","baseline":"v0.4.0 max-bin and local segmentation","current":"candidate sequence and energy segmentation","baselinePitchAccuracy":Double(oldCorrect) / Double(total),"currentPitchAccuracy":Double(newCorrect) / Double(total),"baselinePitchClassAccuracy":Double(oldChroma) / Double(total),"currentPitchClassAccuracy":Double(newChroma) / Double(total),"baselineSequenceEdits":oldEdits,"currentSequenceEdits":newEdits,"referenceVoicedFrames":total,"lowVolumeRecordedCase":["key":first.key,"inputGain":0.01,"quantizationBits":16,"baselineVoicedSeconds":oldQuietDuration,"currentVoicedSeconds":newQuietDuration,"baselineNotes":quietBaseline.filter { $0.midi != nil }.count,"currentNotes":quietCurrent.filter { $0.midi != nil }.count],"cases":report,"limits":"Small validation subset; no claim of parity with commercial products. Annotation timing can affect scores."]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted,.sortedKeys]), uniformTypeIdentifier: "public.json")
         attachment.name = "Humming-Accuracy"; attachment.lifetime = .keepAlways; add(attachment)
         print("HUMMING_BENCHMARK baseline=\(oldCorrect)/\(total) current=\(newCorrect)/\(total) pitchClass=\(oldChroma)->\(newChroma) sequenceEdits=\(oldEdits)->\(newEdits)")

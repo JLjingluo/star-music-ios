@@ -63,8 +63,21 @@ enum PitchAnalyzer {
         var observations: [PitchCandidate]
         var separate: Bool
     }
-    static func analyze(_ data: [Float], sampleRate: Double, bpm: Double, free: Bool, engine: RecognitionEngine = .yin) throws -> [MusicNote] {
-        guard data.count >= 512, sampleRate.isFinite, sampleRate > 0, bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.noNotes }
+    static func normalizedForAnalysis(_ source: [Float], rate: Double) -> [Float] {
+        guard rate.isFinite, rate > 0, !source.isEmpty else { return source }
+        let hop = max(1, Int(rate * 0.02))
+        let levels = stride(from: 0, to: source.count, by: hop).map { start -> Double in
+            let end = min(source.count, start + hop)
+            return sqrt(source[start..<end].reduce(0.0) { $0 + Double($1) * Double($1) } / Double(end - start))
+        }.sorted()
+        let loudness = levels[min(levels.count - 1, levels.count * 9 / 10)]
+        guard loudness.isFinite, loudness > 0.0001 else { return source }
+        let gain = min(32, max(1, 0.12 / loudness))
+        return source.map { max(-1, min(1, $0 * Float(gain))) }
+    }
+    static func analyze(_ source: [Float], sampleRate: Double, bpm: Double, free: Bool, engine: RecognitionEngine = .yin) throws -> [MusicNote] {
+        guard source.count >= 512, sampleRate.isFinite, sampleRate > 0, bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.noNotes }
+        let data = normalizedForAnalysis(source, rate: sampleRate)
         let neural = engine == .neural ? try NeuralPitchDetector() : nil
         guard neural == nil || abs(sampleRate - 16000) < 1 else { throw RecognitionError.configuration("本地 AI 需要 16 kHz 输入。") }
         let size = neural == nil ? max(1024, Int(sampleRate * 0.096)) : 1024

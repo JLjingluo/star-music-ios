@@ -55,6 +55,7 @@ import UniformTypeIdentifiers
                         else if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
                     playbackBar
+                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("editor.keyShift")
                     if !simpleMode { LazyVGrid(columns: [GridItem(.adaptive(minimum: 135))], spacing: 10) {
                         ToolCard(title: addMode ? "结束添加" : professional ? "添加音符" : "写一个声音", subtitle: professional ? "明确的添加模式" : "轻点旋律图，写下声音", symbol: "plus") { addMode.toggle() }.accessibilityIdentifier("editor.addNote")
                         ToolCard(title: "乐器", subtitle: session.track.instrument.name, symbol: session.track.instrument.symbol) { instruments = true }
@@ -75,7 +76,6 @@ import UniformTypeIdentifiers
                         Button(addMode ? "完成添加" : "添加一个声音") { addMode.toggle() }.frame(minHeight: 44).buttonStyle(.bordered)
                         Button("换种声音") { instruments = true }.frame(minHeight: 44).buttonStyle(.bordered)
                     } }
-                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("editor.keyShift")
                     if rawMode == StudioMode.simple.rawValue { Button(expandedTools ? "收起更多工具" : "展开更多工具") { expandedTools.toggle() }.frame(minHeight: 44) }
                     Label(professional ? "自动保存至本地 · 三种内置合成音色" : "已在本机保存，随时可以继续", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
                 }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
@@ -102,7 +102,7 @@ import UniformTypeIdentifiers
             switch result { case .success(let urls): if let url = urls.first { Task { await importToTrack(url) } }; case .failure(let error): session.store.error = error.localizedDescription }
         }
 
-        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button("项目包（含原始录音）") { exportProject() }; Button("MIDI 文件") { exportMIDI() }; Button("WAV 音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
+        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
         .alert("发布服务尚未接入", isPresented: $publish) { Button("导出 WAV 分享") { Task { await exportWAV() } }; Button("继续创作", role: .cancel) {} } message: { Text("作品仍是本地草稿。你可以导出音频分享，不会显示模拟发布成功。") }
         .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text("当前编辑仍保留在内存中。保存失败时不会直接退出。") }
         .sheet(isPresented: $transpose) { KeyShiftSheet(project: session.project, recordingDirectory: session.store.recordingDirectory, professional: professional) { shifted in session.edit { $0 = shifted } }.presentationDetents([.large]) }
@@ -120,7 +120,7 @@ import UniformTypeIdentifiers
         VStack(alignment: .leading, spacing: 16) {
             Text(professional ? "为音乐，加一个声部。" : "再添一种声音。").font(.title2.weight(.medium)).cascade(0)
             StartOption(title: professional ? "空白音轨" : "从头写旋律", subtitle: professional ? "从音符开始，独立写谱" : "轻点高低图，写下新的声音", symbol: "music.note.list") { trackChoice = "blank"; addTrack = false }.cascade(1).accessibilityIdentifier("track.addBlank")
-            StartOption(title: "哼唱录制", subtitle: "录下新声部，再自动识谱", symbol: "mic") { trackChoice = "record"; addTrack = false }.cascade(2).accessibilityIdentifier("track.addRecording")
+            StartOption(title: "哼唱录制", subtitle: professional ? "录下新声部，再自动识谱" : "录一段新哼唱，变成可编辑旋律", symbol: "mic") { trackChoice = "record"; addTrack = false }.cascade(2).accessibilityIdentifier("track.addRecording")
             StartOption(title: professional ? "导入音频或 MIDI" : "导入已有文件", subtitle: professional ? "保留原声，成为可编辑音轨" : "录音会保留，也能继续修改旋律", symbol: "square.and.arrow.down") { trackChoice = "import"; addTrack = false }.cascade(3).accessibilityIdentifier("track.addImport")
         }.padding(24).presentationDetents([.medium, .large]).presentationDragIndicator(.visible).presentationCornerRadius(28)
     }
@@ -147,6 +147,7 @@ import UniformTypeIdentifiers
         }.frame(maxWidth: .infinity).musicCard(radius: 16)
     }
     private func moveMelodyNote(_ id: UUID, _ steps: Int) {
+        guard steps != 0 else { return }
         session.selectedNote = id; audio.stopPlayback()
         session.editNote { note in if let pitch = note.midi { note.midi = max(0, min(127, pitch + steps)); note.confidence = 1 } }
     }
@@ -232,13 +233,13 @@ import UniformTypeIdentifiers
     private func exportProject() { do { share = ShareItem(url: try session.store.package(session.project)) } catch { session.store.error = error.localizedDescription } }
     private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
     private func exportWAV() async {
-        processing = true; defer { processing = false }; let p = session.project, recordingRoot = session.store.recordingDirectory
+        processing = true; stage = "正在生成可以播放的音频…"; defer { processing = false }; let p = session.project, recordingRoot = session.store.recordingDirectory
         do { let data = try await Task.detached { try AudioRenderer.wav(p, recordingDirectory: recordingRoot) }.value; let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
     }
     private func analyzeOriginal() {
         let track = session.track
         guard let url = session.store.recordingURL(session.project, trackID: track.id) else { return }
-        processing = true; stage = "正在使用 " + RecognitionSettings.load().engine.title + " 识谱…"
+        processing = true; stage = professional ? "正在使用 " + RecognitionSettings.load().engine.title + " 识谱…" : "正在分析这段录音，整理旋律…"
         let bpm = session.project.bpm, free = session.project.freeRhythm
         analysis = Task {
             do {

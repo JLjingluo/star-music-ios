@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum MelodyChangeError: LocalizedError {
+    case pitchRange
+    var errorDescription: String? { "这次调整超出支持的音高范围，请少调整一点。" }
+}
+
 enum MelodyTransform {
     static func shifted(_ source: MusicProject, steps: Int, trackID: UUID? = nil) throws -> MusicProject {
         var result = source
@@ -8,7 +13,7 @@ enum MelodyTransform {
         guard !indices.isEmpty else { throw MusicError.invalidProject }
         let pitches = indices.flatMap { result.tracks[$0].notes.compactMap(\.midi) }
         guard !pitches.isEmpty else { throw MusicError.noNotes }
-        guard pitches.allSatisfy({ (0...127).contains($0 + steps) }) else { throw MusicError.save("已经到达支持的音高范围，请少调整一些") }
+        guard pitches.allSatisfy({ (0...127).contains($0 + steps) }) else { throw MelodyChangeError.pitchRange }
         for index in indices {
             if result.tracks[index].notes.contains(where: { $0.midi != nil }) { result.tracks[index].useOriginalAudio = false }
             for i in result.tracks[index].notes.indices { if let pitch = result.tracks[index].notes[i].midi { result.tracks[index].notes[i].midi = pitch + steps } }
@@ -70,7 +75,7 @@ struct MelodyCanvas: View {
                 .overlay(Capsule().stroke(border, style: StrokeStyle(lineWidth: 1, dash: [3])))
                 .frame(width: max(44, frame.width), height: 44)
         }.buttonStyle(.plain).position(x: frame.midX, y: frame.midY)
-            .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑")
+            .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑").accessibilitySortPriority(-note.start)
             .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in
                 let steps = Int((-Double(value.translation.height) / 140 * Double(high - low)).rounded())
                 onMove(note.id, steps)

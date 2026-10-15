@@ -102,13 +102,13 @@ import SwiftUI
     private func analyze(start: Double = 0, end: Double = .infinity) {
         guard let url = store.recordingURL(project, trackID: project.tracks[trackIndex].id) else { return }; processing = true
         let settings = RecognitionSettings.load(), index = trackIndex
-        stage = settings.engine == .cloud ? "正在发送所选原声至你的音频模型…" : "正在使用 \(settings.engine.title) 分析音高与节奏…"
+        stage = settings.engine == .cloud ? "正在发送所选原声至你的音频模型…" : rawMode == StudioMode.professional.rawValue ? "正在使用 \(settings.engine.title) 分析音高与节奏…" : "正在分析录音，整理旋律…"
         let bpm = project.bpm, free = project.freeRhythm
         task = Task {
             do {
                 let result = try await RecognitionService.analyze(url: url, bpm: bpm, free: free, start: start, end: end, settings: settings)
                 try Task.checkCancellation()
-                stage = "正在生成乐谱并保存草稿…"
+                stage = rawMode == StudioMode.professional.rawValue ? "正在生成乐谱并保存草稿…" : "正在保存你的旋律…"
                 let offset = project.tracks[index].sourceStartBeat ?? 0
                 project.tracks[index].notes = result.notes.map { var note = $0; note.start += offset; return note }
                 project.tracks[index].transcript = result.transcript; project.tracks[index].recognitionSource = settings.engine.title
