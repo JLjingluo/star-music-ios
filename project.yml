@@ -36,6 +36,10 @@ targets:
     platform: iOS
     sources:
       - path: StarMusicTests
+        excludes: [BenchmarkSamples]
+      - path: StarMusicTests/BenchmarkSamples
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: StarMusic
     settings:

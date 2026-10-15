@@ -17,7 +17,7 @@ assert 'NSMicrophoneUsageDescription' in plistlib.loads((root/'StarMusic/Info.pl
 project=yaml.safe_load((root/'project.yml').read_text());assert set(project['targets'])=={'StarMusic','StarMusicTests','StarMusicUITests'}
 for p in (root/'.github/workflows').glob('*.yml'):
     workflow=yaml.load(p.read_text(),Loader=yaml.BaseLoader)
-    expected_permissions={'contents':'write','actions':'read'} if p.name=='ipa-download.yml' else {'contents':'read'}
+    expected_permissions={'contents':'write','actions':'read'} if p.name in ('ipa-download.yml','ui-review.yml') else {'contents':'read'}
     assert 'on' in workflow and workflow['permissions']==expected_permissions
     assert all(job['runs-on'].startswith(('macos-','ubuntu-')) for job in workflow['jobs'].values())
 image=Image.open(root/'StarMusic/Assets.xcassets/AppIcon.appiconset/AppIcon.png')

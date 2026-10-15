@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AVFoundation
 
 @MainActor final class ProjectStore: ObservableObject {
     @Published private(set) var projects: [MusicProject] = []
@@ -26,13 +27,14 @@ import Combine
     func load() throws {
         var valid: [MusicProject] = []; var rejected = 0
         for url in try FileManager.default.contentsOfDirectory(at: projectDirectory, includingPropertiesForKeys: nil) where url.pathExtension == "json" {
-            do { let p = try decoder.decode(MusicProject.self, from: Data(contentsOf: url)); try p.validate(); valid.append(p) }
+            do { var p = try decoder.decode(MusicProject.self, from: Data(contentsOf: url)).migratingLegacyRecording(); restoreRecordingDuration(&p); try p.validate(); valid.append(p) }
             catch { rejected += 1 }
         }
         projects = valid.sorted { $0.updated > $1.updated }
         if rejected > 0 { error = "有 \(rejected) 个草稿暂时无法读取；原文件仍保留在应用文件夹中。" }
     }
-    func save(_ project: MusicProject) throws {
+    func save(_ snapshot: MusicProject) throws {
+        var project = snapshot.migratingLegacyRecording(); restoreRecordingDuration(&project)
         try project.validate()
         let data = try encoder.encode(project)
         do { try data.write(to: projectDirectory.appendingPathComponent(project.id.uuidString + ".json"), options: .atomic) }
@@ -42,37 +44,54 @@ import Combine
         projects.sort { $0.updated > $1.updated }
     }
     func update(_ project: MusicProject, _ change: (inout MusicProject) -> Void) {
-        var p = project; change(&p); p.updated = Date()
+        var p = unsavedProjects[project.id] ?? project; change(&p); p.updated = Date()
         do { try save(p) } catch { self.error = error.localizedDescription }
     }
-    func duplicate(_ p: MusicProject) throws {
-        var copy = p; copy.id = UUID(); copy.name += " · 副本"; copy.sample = false; copy.updated = Date(); copy.created = Date()
+    func duplicate(_ snapshot: MusicProject) throws {
+        let p = (unsavedProjects[snapshot.id] ?? snapshot).migratingLegacyRecording()
+        var copy = p; copy.id = UUID(); copy.name = MusicProject.projectName(p.name, suffix: " · 副本"); copy.sample = false; copy.updated = Date(); copy.created = Date()
         copy.tracks = copy.tracks.map { track in
             var t = track; t.id = UUID(); t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; return t
         }
-        var replacements: [String: String] = [:]
-        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
+        var replacements: [String: String] = [:], created: [URL] = []
+        var complete = false
+        defer { if !complete { for url in created { try? FileManager.default.removeItem(at: url) }; unsavedProjects.removeValue(forKey: copy.id) } }
+        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } + $0.notes.compactMap(\.sourceFile) } + [p.recordingFile].compactMap { $0 })
         for file in files {
             let newName = UUID().uuidString + "." + URL(fileURLWithPath: file).pathExtension
-            try FileManager.default.copyItem(at: recordingDirectory.appendingPathComponent(file), to: recordingDirectory.appendingPathComponent(newName))
+            let target = recordingDirectory.appendingPathComponent(newName); created.append(target)
+            try FileManager.default.copyItem(at: recordingDirectory.appendingPathComponent(file), to: target)
             replacements[file] = newName
         }
         copy.recordingFile = p.recordingFile.flatMap { replacements[$0] }
-        for index in copy.tracks.indices { copy.tracks[index].recordingFile = p.tracks[index].recordingFile.flatMap { replacements[$0] }; copy.tracks[index].sourceHistory = p.tracks[index].sourceHistory?.compactMap { replacements[$0] } }
+        for index in copy.tracks.indices { copy.tracks[index].recordingFile = p.tracks[index].recordingFile.flatMap { replacements[$0] }; copy.tracks[index].sourceHistory = p.tracks[index].sourceHistory?.compactMap { replacements[$0] }; for n in copy.tracks[index].notes.indices { copy.tracks[index].notes[n].sourceFile = p.tracks[index].notes[n].sourceFile.flatMap { replacements[$0] } } }
 
-        try save(copy)
+        try save(copy); complete = true
     }
     func recordingURL(_ p: MusicProject, trackID: UUID? = nil) -> URL? {
         if let id = trackID, !p.tracks.contains(where: { $0.id == id }) { return nil }
-        let track = trackID.flatMap { id in p.tracks.first { $0.id == id } } ?? p.tracks.first
-        let file = track?.recordingFile ?? ((trackID == nil || trackID == p.tracks.first?.id) ? p.recordingFile : nil)
+        let canonical = p.migratingLegacyRecording()
+        let owner = trackID.flatMap { id in canonical.tracks.first { $0.id == id } } ?? canonical.tracks.first
+        let file = owner?.recordingFile
         return file.map { recordingDirectory.appendingPathComponent($0) }
+    }
+    func noteRecordingURL(_ project: MusicProject, trackID: UUID, note: MusicNote) -> URL? {
+        if let file = note.sourceFile { return recordingDirectory.appendingPathComponent(file) }
+        return recordingURL(project, trackID: trackID)
+    }
+    private func restoreRecordingDuration(_ project: inout MusicProject) {
+        for i in project.tracks.indices where project.tracks[i].recordingSeconds == nil {
+            if let name = project.tracks[i].recordingFile, let file = try? AVAudioFile(forReading: recordingDirectory.appendingPathComponent(name)), file.processingFormat.sampleRate > 0 {
+                project.tracks[i].recordingSeconds = Double(file.length) / file.processingFormat.sampleRate
+            }
+        }
+        project.syncLegacyRecording()
     }
     func package(_ snapshot: MusicProject) throws -> URL {
         let p = unsavedProjects[snapshot.id] ?? snapshot
         try p.validate()
         var originals: [String: Data] = [:], total = 0
-        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
+        let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } + $0.notes.compactMap(\.sourceFile) } + [p.recordingFile].compactMap { $0 })
         for file in files {
             let data = try Data(contentsOf: recordingDirectory.appendingPathComponent(file)); total += data.count
             guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
@@ -88,23 +107,26 @@ import Combine
         if pack == nil { pack = try WebProjectImport.decode(data) }
         guard let pack, pack.format == "StarMusicNative", (1...2).contains(pack.version) else { throw MusicError.invalidProject }
         try pack.project.validate()
-        var p = pack.project; p.id = UUID(); p.deleted = false; p.sample = false; p.updated = Date(); p.created = Date()
+        var p = pack.project.migratingLegacyRecording(); p.id = UUID(); p.deleted = false; p.sample = false; p.updated = Date(); p.created = Date()
         p.tracks = p.tracks.map { var t = $0; t.id = UUID(); t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; return t }
         var originals = pack.recordings ?? [:]
         if let old = pack.recording { originals[pack.project.recordingFile ?? "original.wav"] = old }
-        var replacements: [String: String] = [:], total = 0
+        // Validate all names, required assets and byte budgets before writing any file.
+        let required = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } + $0.notes.compactMap(\.sourceFile) } + [p.recordingFile].compactMap { $0 })
+        guard required.isSubset(of: Set(originals.keys)) else { throw MusicError.invalidProject }
+        var total = 0
+        for (file, recording) in originals { guard MusicProject.validRecordingName(file) else { throw MusicError.invalidProject }; total += recording.count; guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge } }
+        var replacements: [String: String] = [:], created: [URL] = []
+        var complete = false
+        defer { if !complete { for url in created { try? FileManager.default.removeItem(at: url) }; unsavedProjects.removeValue(forKey: p.id) } }
         for (file, recording) in originals {
-            guard MusicProject.validRecordingName(file) else { throw MusicError.invalidProject }
-            total += recording.count; guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
             let name = UUID().uuidString + "." + URL(fileURLWithPath: file).pathExtension
-            try recording.write(to: recordingDirectory.appendingPathComponent(name), options: .atomic); replacements[file] = name
+            let target = recordingDirectory.appendingPathComponent(name); created.append(target)
+            try recording.write(to: target, options: .atomic); replacements[file] = name
         }
-        // New identifiers and copied source files make every imported project independent.
-        let required = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
-        guard required.isSubset(of: Set(replacements.keys)) else { throw MusicError.invalidProject }
         p.recordingFile = p.recordingFile.flatMap { replacements[$0] }
-        for i in p.tracks.indices { p.tracks[i].recordingFile = p.tracks[i].recordingFile.flatMap { replacements[$0] }; p.tracks[i].sourceHistory = p.tracks[i].sourceHistory?.compactMap { replacements[$0] } }
-        try save(p); return p
+        for i in p.tracks.indices { p.tracks[i].recordingFile = p.tracks[i].recordingFile.flatMap { replacements[$0] }; p.tracks[i].sourceHistory = p.tracks[i].sourceHistory?.compactMap { replacements[$0] }; for n in p.tracks[i].notes.indices { p.tracks[i].notes[n].sourceFile = p.tracks[i].notes[n].sourceFile.flatMap { replacements[$0] } } }
+        try save(p); complete = true; return p
     }
 
 }
@@ -118,12 +140,18 @@ import Combine
     @Published private(set) var redoHistory: [MusicProject] = []
     let store: ProjectStore
     init(_ project: MusicProject, store: ProjectStore) {
-        self.project = store.unsavedProjects[project.id] ?? project; self.store = store
+        self.project = (store.unsavedProjects[project.id] ?? project).migratingLegacyRecording(); self.store = store
         if store.unsavedProjects[project.id] != nil { saveStatus = "保存失败 · 请重试或导出" }
     }
-    func edit(_ operation: (inout MusicProject) -> Void) {
+    @discardableResult func edit(_ operation: (inout MusicProject) -> Void) -> Bool {
+        var candidate = project; operation(&candidate); candidate.updated = Date(); candidate.syncLegacyRecording()
+        // All edit entry points share the same validation before mutating history or data.
+        do { try candidate.validate() } catch { store.error = error.localizedDescription; return false }
+        for i in candidate.tracks.indices {
+            if let old = project.tracks.first(where: { $0.id == candidate.tracks[i].id }), old.sourceStartBeat == candidate.tracks[i].sourceStartBeat, !MusicEdits.sameMusic(old.notes, candidate.tracks[i].notes) { candidate.tracks[i].useOriginalAudio = false }
+        }
         undoHistory.append(project); if undoHistory.count > 256 { undoHistory.removeFirst() }; redoHistory = []
-        operation(&project); project.updated = Date(); persist()
+        project = candidate; persist(); return true
     }
     @discardableResult func persist() -> Bool {
         saveStatus = "保存中…"
@@ -137,7 +165,7 @@ import Combine
     var selected: MusicNote? { track.notes.first { $0.id == selectedNote } }
     func editNote(_ operation: (inout MusicNote) -> Void) {
         guard let i = track.notes.firstIndex(where: { $0.id == selectedNote }) else { return }
-        let t = trackIndex; edit { operation(&$0.tracks[t].notes[i]) }
+        let t = trackIndex; edit { operation(&$0.tracks[t].notes[i]); $0.tracks[t].useOriginalAudio = false }
     }
     func deleteNote() {
         let id = selectedNote; let t = trackIndex; edit { $0.tracks[t].notes.removeAll { $0.id == id } }; selectedNote = nil

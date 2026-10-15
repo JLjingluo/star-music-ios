@@ -20,6 +20,7 @@ struct TrackControlCard: View {
     @State private var name = ""
     @State private var volume = 0.7
     @State private var confirmDelete = false
+    @State private var movementError: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -61,12 +62,13 @@ struct TrackControlCard: View {
             if let text = track.transcript, !text.isEmpty { Text("歌词 / 口述\n" + text).font(.caption).textSelection(.enabled) }
         }.musicCard(radius: 20)
             .onAppear { volume = track.volume }.onChange(of: track.volume) { _, value in volume = value }
+            .alert("无法移动", isPresented: Binding(get: { movementError != nil }, set: { if !$0 { movementError = nil } })) { Button("知道了", role: .cancel) { movementError = nil } } message: { Text(movementError ?? "") }
             .alert("音轨名称", isPresented: $rename) { TextField("名称", text: $name); Button("保存") { change { $0.name = name.isEmpty ? "未命名声部" : String(name.prefix(60)) } }; Button("取消", role: .cancel) {} }
             .confirmationDialog("删除这条音轨？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("删除音轨", role: .destructive, action: onDelete); Button("取消", role: .cancel) {} } message: { Text("可通过撤销恢复；原始文件不会立即删除。") }
     }
     private var sourceControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Stepper("整轨起点：\(track.sourceStartBeat ?? 0, specifier: "%.1f") 拍", value: Binding(get: { track.sourceStartBeat ?? 0 }, set: { value in change { t in let delta = value - (t.sourceStartBeat ?? 0); t.sourceStartBeat = value; for i in t.notes.indices { t.notes[i].start = max(0, t.notes[i].start + delta) } } }), in: 0...max(64, beats + 32), step: 0.5).font(.caption)
+            Stepper("整轨起点：\(track.sourceStartBeat ?? 0, specifier: "%.1f") 拍", value: Binding(get: { track.sourceStartBeat ?? 0 }, set: { value in do { onUpdate(try MusicEdits.offset(track, to: value)) } catch { movementError = error.localizedDescription } }), in: 0...max(64, beats + 32), step: 0.5).font(.caption)
             if hasSource, let duration = track.recordingSeconds, duration > 0.1 {
                 Stepper("原声裁剪起点：\(track.trimStart ?? 0, specifier: "%.1f") 秒", value: Binding(get: { track.trimStart ?? 0 }, set: { value in change { $0.trimStart = value } }), in: 0...max(0, (track.trimEnd ?? duration) - 0.1), step: 0.1).font(.caption)
                 Stepper("原声裁剪终点：\(track.trimEnd ?? duration, specifier: "%.1f") 秒", value: Binding(get: { track.trimEnd ?? duration }, set: { value in change { $0.trimEnd = value } }), in: min(duration, (track.trimStart ?? 0) + 0.1)...duration, step: 0.1).font(.caption)

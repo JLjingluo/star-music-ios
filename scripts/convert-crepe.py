@@ -3,7 +3,11 @@ Run with Python 3.11, tensorflow-cpu 2.15.1, coremltools 8.3.0 and scipy 1.12.0.
 The original architecture/weights remain MIT-licensed: github.com/marl/crepe.
 """
 from pathlib import Path
-import bz2,importlib.util,json,hashlib,os
+import argparse,bz2,importlib.util,json,hashlib,os,urllib.request
+root=Path(__file__).resolve().parent.parent
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--cache-dir",type=Path,default=root/"build/crepe-source",help="Reusable source/weights cache; no workspace-specific paths")
+args=parser.parse_args()
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 os.environ['OMP_NUM_THREADS']='4'
 os.environ['TF_NUM_INTRAOP_THREADS']='4'
@@ -11,11 +15,17 @@ os.environ['TF_NUM_INTEROP_THREADS']='2'
 import tensorflow as tf
 import coremltools as ct
 import numpy as np
-root=Path(__file__).resolve().parent.parent
-source=Path('/workspace/audio-reference/crepe/crepe/core.py')
-weights=source.parent/'model-full.h5'
+cache=args.cache_dir.resolve();cache.mkdir(parents=True,exist_ok=True)
+source=cache/'core.py';weights=cache/'model-full.h5'
+source_commit='c9b71ce61491454125a0693f584f7244f29d9884'
+if not source.exists():
+    source.write_bytes(urllib.request.urlopen(f'https://raw.githubusercontent.com/marl/crepe/{source_commit}/crepe/core.py',timeout=30).read())
 if not weights.exists():
-    weights.write_bytes(bz2.decompress(Path('/workspace/audio-reference/model-full.h5.bz2').read_bytes()))
+    compressed=urllib.request.urlopen('https://raw.githubusercontent.com/marl/crepe/models/model-full.h5.bz2',timeout=120).read()
+    weights.write_bytes(bz2.decompress(compressed))
+expected='b6fd2758b03a8625a16fe86cd474ff0d8f30ad9a05e4bee2244e13e98664f860'
+if hashlib.sha256(weights.read_bytes()).hexdigest()!=expected:
+    raise RuntimeError('CREPE full weights hash mismatch; refusing conversion')
 spec=importlib.util.spec_from_file_location('crepe_core',source)
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 model=module.build_and_load_model('full')

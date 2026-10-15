@@ -118,7 +118,7 @@ struct DraftRow: View {
             HStack(spacing: 0) {
                 if project.deleted { Button("恢复") { store.update(project) { $0.deleted = false } }.frame(minHeight: 44) }
                 else {
-                    Button { Task { do { try await audio.play(project, recordingDirectory: store.recordingDirectory) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == project.id).frame(width: 44, height: 44) }.buttonStyle(.borderless).accessibilityLabel("试听 \(project.name)")
+                    Button { Task { do { try await audio.play(project, recordingDirectory: store.recordingDirectory) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == project.id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderless).accessibilityLabel("试听 \(project.name)")
                 }
                 Menu {
                     if !project.deleted {
@@ -203,7 +203,7 @@ struct CommunityView: View {
                                     Text("\(DemoMusic.authors[i]) · \(DemoMusic.kinds[i]) · \(musicTime(examples[i].seconds))").font(.caption).foregroundStyle(.secondary)
                                 }.padding(.vertical, 8)
                             }.buttonStyle(.borderless)
-                            Button { Task { do { try await audio.play(examples[i]) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == examples[i].id).frame(width: 44, height: 44) }.buttonStyle(.borderless).accessibilityLabel("播放演示作品 \(DemoMusic.titles[i])")
+                            Button { Task { do { try await audio.play(examples[i]) } catch { store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == examples[i].id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderless).accessibilityLabel("播放演示作品 \(DemoMusic.titles[i])")
                         }
                     }
                 }

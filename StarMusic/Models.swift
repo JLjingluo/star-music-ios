@@ -9,6 +9,7 @@ struct MusicNote: Codable, Identifiable, Equatable, Sendable {
     var rawStart: Double?
     var rawDuration: Double?
     var tied: Bool = false
+    var sourceFile: String?
     var pitchName: String {
         guard let midi else { return "休止符" }
         return ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][midi % 12] + String(midi / 12 - 1)
@@ -64,10 +65,34 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
     var tracks = [MusicTrack()]
     var beats: Double {
         let notes = tracks.flatMap(\.notes).map { $0.start + $0.duration }.max() ?? 4
-        let clips = tracks.filter { $0.recordingFile != nil }.map { ($0.sourceStartBeat ?? 0) + $0.sourceDuration * bpm / 60 }.max() ?? 0
+        let clips = tracks.filter { $0.recordingFile != nil && $0.useOriginalAudio == true }.map { ($0.sourceStartBeat ?? 0) + $0.sourceDuration * bpm / 60 }.max() ?? 0
         return max(max(4, notes), clips)
     }
-    var seconds: Double { beats * 60 / bpm }
+    var seconds: Double {
+        let solo = tracks.contains { $0.solo }
+        let ends = tracks.filter { !$0.muted && (!solo || $0.solo) }.map { track -> Double in
+            if track.useOriginalAudio == true { return (track.sourceStartBeat ?? 0) + track.sourceDuration * bpm / 60 }
+            return track.notes.filter { $0.midi != nil }.map { $0.start + $0.duration }.max() ?? 0
+        }
+        return max(4, ends.max() ?? 0) * 60 / bpm
+    }
+    // Legacy root fields migrate only at document boundaries, never by track position during playback.
+    func migratingLegacyRecording() -> MusicProject {
+        var p = self
+        guard !p.tracks.isEmpty else { return p }
+        if let file = p.recordingFile {
+            if p.tracks[0].recordingFile == nil { p.tracks[0].recordingFile = file }
+            if p.tracks[0].recordingFile == file, p.tracks[0].recordingSeconds == nil { p.tracks[0].recordingSeconds = p.recordingSeconds }
+        }
+        p.syncLegacyRecording(); return p
+    }
+    mutating func syncLegacyRecording() {
+        recordingFile = tracks.first?.recordingFile; recordingSeconds = tracks.first?.recordingSeconds
+    }
+    static func projectName(_ value: String, suffix: String = "") -> String {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String((clean.isEmpty ? "未命名的旋律" : clean).prefix(max(1, 120 - suffix.count))) + suffix
+    }
     var bars: Int { max(1, Int(ceil(beats / 4))) }
     static func example(_ index: Int) -> MusicProject {
         let names = ["晚风的形状", "周末即兴", "雨落之前"]
@@ -79,7 +104,7 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
     }
     func validate() throws {
         guard !name.isEmpty, name.count <= 120, bpm.isFinite, (30...300).contains(bpm), (1...128).contains(tracks.count) else { throw MusicError.invalidProject }
-        guard recordingFile.map(Self.validRecordingName) ?? true else { throw MusicError.invalidProject }
+        guard recordingFile.map(Self.validRecordingName) ?? true, recordingSeconds.map({ $0.isFinite && $0 >= 0 && $0 <= 100000 }) ?? true else { throw MusicError.invalidProject }
         var count = 0
         for track in tracks {
             guard track.volume.isFinite, (0...1).contains(track.volume) else { throw MusicError.invalidProject }
@@ -90,6 +115,7 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
             if let length = track.recordingSeconds, let end = track.trimEnd { guard end <= length + 0.01 else { throw MusicError.invalidProject } }
             for note in track.notes {
                 count += 1
+                guard note.sourceFile.map(Self.validRecordingName) ?? true else { throw MusicError.invalidProject }
                 guard count <= 20000, note.start.isFinite, note.start >= 0, note.duration.isFinite, note.duration > 0, note.start + note.duration <= 100000,
                       note.midi == nil || (0...127).contains(note.midi!), note.confidence.isFinite, (0...1).contains(note.confidence) else { throw MusicError.invalidProject }
                 for value in [note.rawStart, note.rawDuration].compactMap({ $0 }) { guard value.isFinite, value >= 0, value <= 100000 else { throw MusicError.invalidProject } }
@@ -107,11 +133,12 @@ struct ProjectPackage: Codable {
 }
 
 enum MusicError: LocalizedError {
-    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, save(String)
+    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, midiCapacity, save(String)
     var errorDescription: String? {
         switch self {
         case .invalidProject: "项目数据无效或超出支持范围。"
         case .invalidMIDI: "MIDI 文件不完整，或使用了暂不支持的时间格式。"
+        case .midiCapacity: "MIDI 转换后的声部超过 128 条，或包含超出支持范围的内容。原工程不会被修改。"
         case .noNotes: "没有识别出清晰的音符，原始录音仍保留在草稿中。"
         case .permission: "麦克风权限被拒绝。可以前往系统设置允许麦克风，或从空白乐谱开始。"
         case .tooLarge: "支持 256 MB 以内音频文件、512 MB 以内项目包；单次音频分析最长 5 分钟，成品导出最长 10 分钟。"

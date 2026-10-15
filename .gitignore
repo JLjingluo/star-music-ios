@@ -9,4 +9,7 @@ artifacts/
 *.keychain-db
 .env
 
-StarMusicTests/BenchmarkSamples/
+StarMusicTests/BenchmarkSamples/*
+!StarMusicTests/BenchmarkSamples/README.md
+
+__pycache__/

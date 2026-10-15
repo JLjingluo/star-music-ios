@@ -24,7 +24,9 @@ struct RecognitionSettings: Codable, Equatable {
     func endpoint() throws -> URL {
         guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)), components.scheme == "https", components.host != nil,
               components.user == nil, components.password == nil, components.query == nil, components.fragment == nil else { throw RecognitionError.configuration("请输入不带密钥的 HTTPS API 基础地址。") }
-        if !components.path.hasSuffix("/chat/completions") { let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")); components.path = (path.isEmpty ? "" : "/" + path) + "/chat/completions" }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = path.isEmpty ? "" : "/" + path
+        if !components.path.hasSuffix("/chat/completions") { components.path += "/chat/completions" }
         guard let url = components.url else { throw RecognitionError.configuration("API 地址无效。") }
         return url
     }

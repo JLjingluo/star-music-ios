@@ -49,7 +49,7 @@ import SwiftUI
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.buttonStyle(.bordered).frame(minHeight: 44)
                             GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送原声并识别" : rawMode == StudioMode.professional.rawValue ? "完成并生成乐谱" : "完成，整理旋律", symbol: "checkmark") { finishAndAnalyze() }
                         }
-                    } else { GoldButton(title: "继续编辑", symbol: "music.note") { if saveRecordingMetadata() { edit() } } }
+                    } else { GoldButton(title: "整理这段旋律", symbol: "music.note") { finishAndAnalyze() } }
                     Text("在安静环境中，清晰地哼唱一条旋律。\n首版支持单声部哼唱，不承诺识别复杂歌曲。\n原始录音保存在本机，最长支持 5 分钟转谱。").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(5)
                 }.padding(24).frame(maxWidth: 850).frame(maxWidth: .infinity).padding(16)
             }.background(Palette.background(scheme)).navigationTitle(project.name).navigationBarTitleDisplayMode(.inline)
@@ -66,7 +66,7 @@ import SwiftUI
         .alert("需要麦克风权限", isPresented: $permission) { Button("前往系统设置") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }; Button("空白创作") { edit() }; Button("取消", role: .cancel) {} } message: { Text("麦克风仅用于录制你的哼唱，原始录音保存在本机。你也可以不使用麦克风，直接写谱。") }
         .confirmationDialog("保留这段灵感吗？", isPresented: $leaving, titleVisibility: .visible) {
             Button("保存并退出") { audio.finishRecording(); if saveRecordingMetadata() { dismiss() } }
-            Button("继续录制") { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } }
+            if audio.recordingState == .paused { Button("继续录制") { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }
             Button("放弃本次录音", role: .destructive) { discardTake() }
             Button("取消", role: .cancel) {}
         }
@@ -93,9 +93,9 @@ import SwiftUI
         do {
             audio.metronomeBPM = beat ? project.bpm : nil; try await audio.beginRecording(to: url); createdFile = name
             let index = trackIndex
-            if let old = project.tracks[index].recordingFile ?? (index == 0 ? project.recordingFile : nil) { project.tracks[index].sourceHistory = (project.tracks[index].sourceHistory ?? []) + [old] }
-            project.tracks[index].recordingFile = name; project.tracks[index].trimStart = nil; project.tracks[index].trimEnd = nil; project.tracks[index].useOriginalAudio = true
-            if index == 0 { project.recordingFile = name }
+            if project.tracks[index].recordingFile == nil, index == 0 { project = project.migratingLegacyRecording() }
+            MusicEdits.attachOriginal(&project.tracks[index], file: name, duration: 0)
+            project.syncLegacyRecording()
             project.freeRhythm = !beat; saveRecordingMetadata()
         }
         catch MusicError.permission { permission = true }
@@ -118,7 +118,7 @@ import SwiftUI
                 try Task.checkCancellation()
                 stage = rawMode == StudioMode.professional.rawValue ? "正在生成乐谱并保存草稿…" : "正在保存你的旋律…"
                 let offset = project.tracks[index].sourceStartBeat ?? 0
-                project.tracks[index].notes = result.notes.map { var note = $0; note.start += offset; return note }
+                project.tracks[index].notes = result.notes.map { var note = $0; note.start += offset; note.sourceFile = project.tracks[index].recordingFile; return note }
                 project.tracks[index].transcript = result.transcript; project.tracks[index].recognitionSource = settings.engine.title
                 project.tracks[index].trimStart = start; project.tracks[index].trimEnd = end.isFinite ? end : nil; project.tracks[index].useOriginalAudio = false
                 processing = false; if saveRecordingMetadata() { edit() }

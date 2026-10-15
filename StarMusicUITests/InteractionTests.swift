@@ -4,7 +4,7 @@ final class InteractionTests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
     private func launch(_ appearance: String = "dark") -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-appearance", appearance, "-studioMode", "standard", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-appearance", appearance, "--ui-test-standard-mode", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.tabBars.count, 1, "Exactly one native tab bar owns the four sections.")
@@ -29,7 +29,7 @@ final class InteractionTests: XCTestCase {
         back(app); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5)); XCTAssertTrue(app.tabBars.firstMatch.isHittable)
     }
     func testDraftNativeSearchAndGridKeepContentAccessible() {
-        let app = launch(); app.buttons["home.drafts"].tap()
+        let app = launch(); app.swipeUp(); app.buttons["home.drafts"].tap()
         let field = app.searchFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText("zzNoMatchingDraftzz")
         XCTAssertTrue(app.staticTexts["没有匹配的旋律"].waitForExistence(timeout: 5)); capture("Drafts-Native-Search")
@@ -40,8 +40,9 @@ final class InteractionTests: XCTestCase {
     func testLightAppearanceAndNativeSettingsToggle() {
         let app = launch("light"); capture("Home-Light"); app.tabBars.buttons["我的"].tap()
         let control = app.switches["settings.haptics"]
+        if !control.isHittable { app.swipeUp() }
         XCTAssertTrue(control.waitForExistence(timeout: 5)); let original = control.value as? String
-        control.tap(); XCTAssertNotEqual(control.value as? String, original); control.tap(); XCTAssertEqual(control.value as? String, original)
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap(); XCTAssertNotEqual(control.value as? String, original); control.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap(); XCTAssertEqual(control.value as? String, original)
         capture("Profile-Light")
     }
     func testTrackChooserModesAndModelConfiguration() {
@@ -53,7 +54,7 @@ final class InteractionTests: XCTestCase {
         app.buttons["展开更多工具"].tap(); XCTAssertTrue(app.buttons["收起更多工具"].exists)
         app.swipeDown(); mode("专业模式", app); XCTAssertTrue(app.buttons["recognition.engine"].waitForExistence(timeout: 5)); capture("Tracks-Professional")
         back(app); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5)); app.tabBars.buttons["我的"].tap()
-        app.buttons["识谱与我的模型"].tap()
+        let modelLink = app.buttons["识谱与我的模型"]; if !modelLink.isHittable { app.swipeUp() }; modelLink.tap()
         XCTAssertTrue(app.textFields["model.identifier"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "无法保存或读取设备密钥")).firstMatch.exists); capture("Model-Settings")
     }
@@ -62,6 +63,7 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "BPM")).firstMatch.exists)
         app.buttons["editor.addNote"].tap(); app.otherElements["editor.melody"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        if !app.buttons["editor.keyShift"].isHittable { app.swipeUp() }
         app.buttons["editor.keyShift"].tap(); XCTAssertTrue(app.buttons["key.higher"].waitForExistence(timeout: 5)); app.buttons["key.higher"].tap()
         XCTAssertTrue(app.staticTexts["比原来高 1 点"].exists); capture("Key-Shift-Plain")
         app.buttons["key.preview"].tap(); app.buttons["key.apply"].tap(); XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))
@@ -71,12 +73,12 @@ final class InteractionTests: XCTestCase {
         app.swipeDown(); mode("普通模式", app); XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5)); capture("Melody-Standard")
     }
     func testNativeTabHistoryAndEdgeSwipeBack() {
-        let app = launch(); app.buttons["home.drafts"].tap(); XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
+        let app = launch(); app.swipeUp(); app.buttons["home.drafts"].tap(); XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
         app.tabBars.buttons["消息"].tap(); XCTAssertTrue(app.staticTexts["暂无在线消息"].waitForExistence(timeout: 5)); capture("Messages-Native")
         app.tabBars.buttons["创作"].tap(); XCTAssertTrue(app.searchFields.firstMatch.exists, "Native tabs retain each section's navigation history.")
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
-        XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5)); blank(app)
+        XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5)); app.swipeDown(); blank(app)
         start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
         XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
     }
@@ -86,6 +88,14 @@ final class InteractionTests: XCTestCase {
         app.buttons["home.start"].tap(); app.buttons["start.record"].tap()
         XCTAssertTrue(app.buttons["recording.start"].waitForExistence(timeout: 8)); XCTAssertFalse(app.tabBars.firstMatch.isHittable); capture("Recording-Preparation")
         app.buttons["recording.cancel"].tap(); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
+    }
+    func testCoordinateFreeNoteEntryAndProfessionalScore() {
+        let app = launch(); blank(app); app.swipeUp()
+        app.buttons["editor.noteEntry"].tap()
+        XCTAssertTrue(app.buttons["noteEntry.add"].waitForExistence(timeout: 5)); capture("Accessible-Note-Entry")
+        app.buttons["noteEntry.add"].tap()
+        XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5)); app.swipeDown(); mode("专业模式", app)
+        XCTAssertTrue(app.staticTexts["4/4 拍"].waitForExistence(timeout: 5)); capture("Score-Native-Professional")
     }
     func testCommunityNativeDetailAndComments() {
         let app = launch(); app.tabBars.buttons["社区"].tap()

@@ -5,6 +5,12 @@ import UniformTypeIdentifiers
     @StateObject private var store = ProjectStore()
     @StateObject private var audio = AudioController()
     @AppStorage("appearance") private var appearance = "dark"
+    init() {
+        #if DEBUG
+        // A dedicated reset flag avoids pinning AppStorage in NSArgumentDomain.
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-standard-mode") { UserDefaults.standard.set("standard", forKey: "studioMode") }
+        #endif
+    }
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(store).environmentObject(audio)
@@ -95,15 +101,14 @@ struct RootView: View {
             let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0; guard size <= (url.pathExtension.lowercased() == "starmusic" || url.pathExtension.lowercased() == "json" ? 512 : 256) * 1024 * 1024 else { throw MusicError.tooLarge }
             let ext = url.pathExtension.lowercased(); var p: MusicProject
             if ext == "starmusic" || ext == "json" { p = try store.importPackage(Data(contentsOf: url)) }
-            else if ext == "mid" || ext == "midi" { p = try MIDI.parse(Data(contentsOf: url)); p.name = url.deletingPathExtension().lastPathComponent; try store.save(p) }
+            else if ext == "mid" || ext == "midi" { p = try MIDI.parse(Data(contentsOf: url)); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent); try store.save(p) }
             else {
-                let name = UUID().uuidString + "." + ext, target = store.recordingDirectory.appendingPathComponent(name)
-                try FileManager.default.copyItem(at: url, to: target)
-                p = MusicProject(); p.name = url.deletingPathExtension().lastPathComponent; p.recordingFile = name; p.tracks[0].recordingFile = name; p.tracks[0].useOriginalAudio = true; p.freeRhythm = true
-                try store.save(p)
-                let result = try await Task.detached { try AudioController.samples(from: target) }.value
-                p.recordingSeconds = Double(result.samples.count) / result.sampleRate; p.tracks[0].recordingSeconds = p.recordingSeconds; try store.save(p)
-                do { let recognized = try await RecognitionService.analyze(url: target, bpm: p.bpm, free: true); p.tracks[0].notes = recognized.notes; p.tracks[0].transcript = recognized.transcript; p.tracks[0].recognitionSource = RecognitionSettings.load().engine.title }
+                let prepared = try await AudioImport.prepare(url, directory: store.recordingDirectory)
+                let name = prepared.name, target = prepared.url
+                p = MusicProject(); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent)
+                MusicEdits.attachOriginal(&p.tracks[0], file: name, duration: prepared.duration); p.freeRhythm = true; p.syncLegacyRecording()
+                do { try store.save(p) } catch { open(p); throw error }
+                do { let recognized = try await RecognitionService.analyze(url: target, bpm: p.bpm, free: true); p.tracks[0].notes = recognized.notes.map { var note = $0; note.sourceFile = name; return note }; p.tracks[0].useOriginalAudio = false; p.tracks[0].transcript = recognized.transcript; p.tracks[0].recognitionSource = RecognitionSettings.load().engine.title }
                 catch { store.error = "原始音频已保存，可在编辑器中重试分析或手动写谱。" }
                 try store.save(p)
             }

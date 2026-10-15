@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 @testable import StarMusic
 
 final class MusicTests: XCTestCase {
@@ -327,12 +328,15 @@ final class MusicTests: XCTestCase {
     func testRealHummingValidationSubsetReportsBaselineAndCurrent() throws {
         struct Manifest: Decodable { struct Item: Decodable { var key: String; var audio: String; var midi: String }; var cases: [Item] }
         let bundle = Bundle(for: MusicTests.self)
-        let manifestURL = try XCTUnwrap(bundle.url(forResource: "humtrans-cases", withExtension: "json"), "Prepare benchmark resources before XcodeGen")
+        guard let manifestURL = bundle.url(forResource: "humtrans-cases", withExtension: "json", subdirectory: "BenchmarkSamples") ?? bundle.url(forResource: "humtrans-cases", withExtension: "json") else {
+            if ProcessInfo.processInfo.environment["REQUIRE_HUMMING_BENCHMARK"] == "1" { XCTFail("Run bash scripts/prepare-tests.sh before the complete suite") }
+            throw XCTSkip("Real humming fixtures missing. Run bash scripts/prepare-tests.sh; no accuracy result is claimed.")
+        }
         let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
         var report: [[String: Any]] = []; var oldCorrect = 0, newCorrect = 0, oldChroma = 0, newChroma = 0, oldEdits = 0, newEdits = 0, total = 0
         for item in manifest.cases {
-            let audioURL = try XCTUnwrap(bundle.url(forResource: item.audio, withExtension: nil))
-            let midiURL = try XCTUnwrap(bundle.url(forResource: item.midi, withExtension: nil))
+            let audioURL = try XCTUnwrap(bundle.url(forResource: item.audio, withExtension: nil, subdirectory: "BenchmarkSamples") ?? bundle.url(forResource: item.audio, withExtension: nil))
+            let midiURL = try XCTUnwrap(bundle.url(forResource: item.midi, withExtension: nil, subdirectory: "BenchmarkSamples") ?? bundle.url(forResource: item.midi, withExtension: nil))
             let source = try AudioController.samples(from: audioURL)
             let clip = Array(source.samples.prefix(Int(source.sampleRate * 6)))
             let samples = try AudioController.resample(clip, from: source.sampleRate, to: 16000)
@@ -366,7 +370,7 @@ final class MusicTests: XCTestCase {
         }
         XCTAssertGreaterThan(total, 100)
         let first = try XCTUnwrap(manifest.cases.first)
-        let quietURL = try XCTUnwrap(bundle.url(forResource: first.audio, withExtension: nil))
+        let quietURL = try XCTUnwrap(bundle.url(forResource: first.audio, withExtension: nil, subdirectory: "BenchmarkSamples") ?? bundle.url(forResource: first.audio, withExtension: nil))
         let quietData = try AudioController.samples(from: quietURL)
         let quietInput = Array(quietData.samples.prefix(Int(quietData.sampleRate * 6))).map { Float((Double($0) * 0.01 * 32767).rounded() / 32767) }
         let quietSamples = try AudioController.resample(quietInput, from: quietData.sampleRate, to: 16000)
@@ -469,5 +473,181 @@ private enum LegacyPitchBenchmark {
             withRests.append(note)
         }
         return withRests
+    }
+}
+
+final class AuditRegressionTests: XCTestCase {
+    private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
+    @MainActor func testDamagedAudioImportLeavesTrackAndRecordingUnchanged() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject()
+        p.tracks[0].recordingFile = "valid.wav"; p.tracks[0].recordingSeconds = 1; p.tracks[0].useOriginalAudio = true
+        let original = AudioRenderer.pcmWAV(Array(repeating: 0.1, count: 16000), rate: 16000)
+        try original.write(to: store.recordingDirectory.appendingPathComponent("valid.wav")); try store.save(p)
+        let disk = try Data(contentsOf: store.projectDirectory.appendingPathComponent(p.id.uuidString + ".json"))
+        let bad = root.appendingPathComponent("damaged.wav"); try Data("broken audio".utf8).write(to: bad)
+        do { _ = try await AudioImport.prepare(bad, directory: store.recordingDirectory); XCTFail("Corrupt audio must not commit") } catch {}
+        XCTAssertEqual(try Data(contentsOf: store.projectDirectory.appendingPathComponent(p.id.uuidString + ".json")), disk)
+        XCTAssertEqual(try Data(contentsOf: store.recordingDirectory.appendingPathComponent("valid.wav")), original)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path), ["valid.wav"])
+    }
+    func testStreamingHighRateMultichannelDecodeIsMonoAndBounded() throws {
+        let root = temporaryRoot(); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("wide.caf")
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 192000, channels: 8, interleaved: false))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)); buffer.frameLength = 4096
+        for channel in 0..<8 { for i in 0..<4096 { buffer.floatChannelData![channel][i] = Float(0.1 * sin(2 * Double.pi * 375 * Double(i) / 192000)) } }
+        do { let file = try AVAudioFile(forWriting: url, settings: format.settings); for _ in 0..<48 { try file.write(from: buffer) } }
+        let decoded = try AudioController.samples(from: url)
+        XCTAssertEqual(decoded.sampleRate, 16000)
+        XCTAssertLessThanOrEqual(decoded.samples.count, 16400)
+        XCTAssertGreaterThan(decoded.samples.count, 16000)
+        XCTAssertTrue(decoded.samples.allSatisfy(\.isFinite))
+    }
+    func testDecoderAcceptsTimerOvershootAndReadsExcerptBeforeWholeFileLimit() throws {
+        let root = temporaryRoot(); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        let long = root.appendingPathComponent("long.wav"), overshoot = root.appendingPathComponent("overshoot.wav")
+        try AudioRenderer.pcmWAV(Array(repeating: 0, count: 2_412_000), rate: 8000).write(to: long)
+        XCTAssertThrowsError(try AudioController.samples(from: long))
+        let excerpt = try AudioController.samples(from: long, start: 300, end: 301.5)
+        XCTAssertLessThanOrEqual(abs(excerpt.samples.count - 24000), 64)
+        try AudioRenderer.pcmWAV(Array(repeating: 0, count: 2_400_320), rate: 8000).write(to: overshoot)
+        let clipped = try AudioController.samples(from: overshoot)
+        XCTAssertLessThanOrEqual(clipped.samples.count, 4_800_000)
+        XCTAssertGreaterThan(clipped.samples.count, 4_799_900)
+    }
+    func testCancelledRenderJobsExitAndDoNotBlockNextRender() async throws {
+        var p = MusicProject(); p.bpm = 30; p.tracks[0].notes = [MusicNote(midi: 60, start: 0, duration: 299)]
+        let jobs = (0..<4).map { _ in Task { try await AudioRenderer.render(p) } }
+        for job in jobs { job.cancel() }
+        for job in jobs { do { _ = try await job.value; XCTFail("Cancelled render should exit") } catch is CancellationError {} }
+        let short = try AudioController.previewProject(.piano, midi: 127)
+        let rendered = try await AudioRenderer.render(short)
+        XCTAssertEqual(String(decoding: rendered.prefix(4), as: UTF8.self), "RIFF")
+    }
+    @MainActor func testPlaybackReallyPausesResumesAndPreviewDoesNotInheritLoop() async throws {
+        let controller = AudioController(), p = try AudioController.previewProject(.piano, midi: 69)
+        try await controller.play(p, loop: true); controller.seek(to: 0.2)
+        try await controller.play(p, loop: true)
+        XCTAssertTrue(controller.paused); XCTAssertEqual(controller.playingID, p.id); XCTAssertEqual(controller.playbackSeconds, 0.2, accuracy: 0.05)
+        try await controller.play(p, loop: true); XCTAssertFalse(controller.paused); XCTAssertTrue(controller.isLooping)
+        controller.stopPlayback(); try await controller.preview(.piano, midi: 127)
+        XCTAssertFalse(controller.isLooping); controller.stopPlayback()
+        for pitch in 121...127 { let preview = try AudioController.previewProject(.piano, midi: pitch); XCTAssertEqual(preview.tracks[0].notes.map(\.midi), [pitch]); try preview.validate() }
+    }
+    @MainActor func testAllEditEntryPointsRejectCapacityBeforeChangingHistory() throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject(); p.tracks = (0..<128).map { _ in MusicTrack() }
+        let session = EditorSession(p, store: store)
+        XCTAssertFalse(session.edit { $0.tracks.append(MusicTrack()) }); XCTAssertEqual(session.project.tracks.count, 128); XCTAssertTrue(session.undoHistory.isEmpty)
+        p.tracks = [MusicTrack(notes: (0..<20000).map { MusicNote(midi: 60, start: Double($0), duration: 0.25) })]
+        let many = EditorSession(p, store: store)
+        many.addNote(midi: 64, start: 0); XCTAssertEqual(many.track.notes.count, 20000); XCTAssertTrue(many.undoHistory.isEmpty)
+        XCTAssertTrue(many.edit { $0.tracks[0].notes.removeLast() }); XCTAssertEqual(many.track.notes.count, 19999)
+    }
+    @MainActor func testNoteEditsUseInstrumentAndKeepCorrectEarlierTake() throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root)
+        var track = MusicTrack(notes: [MusicNote(midi: 60, start: 2, duration: 2, rawStart: 1, rawDuration: 1)])
+        track.recordingFile = "take-one.wav"; track.useOriginalAudio = true
+        MusicEdits.attachOriginal(&track, file: "take-two.wav", duration: 4)
+        XCTAssertEqual(track.notes[0].sourceFile, "take-one.wav"); XCTAssertEqual(track.sourceHistory, ["take-one.wav"])
+        var p = MusicProject(); p.tracks = [track]
+        XCTAssertEqual(store.noteRecordingURL(p, trackID: track.id, note: track.notes[0])?.lastPathComponent, "take-one.wav")
+        let session = EditorSession(p, store: store); session.selectedNote = track.notes[0].id; session.editNote { $0.midi = 65 }
+        XCTAssertEqual(session.track.useOriginalAudio, false); XCTAssertEqual(session.track.notes[0].sourceFile, "take-one.wav")
+        session.undo(); XCTAssertEqual(session.track.useOriginalAudio, true)
+    }
+    func testSplitMergeAndOffsetPreserveSourceTimeAndRelativeRhythm() throws {
+        let note = MusicNote(midi: 60, start: 2, duration: 4, rawStart: 1, rawDuration: 2, sourceFile: "original.wav")
+        let parts = MusicEdits.split(note)
+        XCTAssertEqual(parts.0.rawDuration, 1); XCTAssertEqual(parts.1.rawStart, 2); XCTAssertEqual(parts.1.rawDuration, 1)
+        XCTAssertEqual(parts.1.start, 4); XCTAssertNotEqual(parts.0.id, parts.1.id)
+        let merged = try MusicEdits.merged(parts.0, parts.1); XCTAssertEqual(merged.duration, 4); XCTAssertEqual(merged.rawStart, 1); XCTAssertEqual(merged.rawDuration, 2)
+        let overlap = MusicNote(midi: 60, start: 2.5, duration: 0.25, rawStart: 1.25, rawDuration: 0.125, sourceFile: "original.wav")
+        XCTAssertEqual(try MusicEdits.merged(note, overlap).duration, 4)
+        var track = MusicTrack(notes: [note, overlap]); track.sourceStartBeat = 2
+        XCTAssertThrowsError(try MusicEdits.offset(track, to: 0 - 0.1))
+        let moved = try MusicEdits.offset(track, to: 0)
+        XCTAssertEqual(moved.notes[1].start - moved.notes[0].start, 0.5)
+        XCTAssertEqual(try MusicEdits.offset(moved, to: 2).notes, track.notes)
+        XCTAssertEqual(MusicEdits.originalStart(MusicNote(midi: 60, start: 5, duration: 1), track: track, bpm: 120), 1.5)
+    }
+    func testPartitionPreservesMixAndSourceAssociationsWithoutDuplicatingOriginal() {
+        let first = MusicNote(midi: 60, start: 0, duration: 1, sourceFile: "take.wav"), second = MusicNote(midi: 64, start: 1, duration: 1, sourceFile: "take.wav")
+        var track = MusicTrack(volume: 0.23, muted: true, solo: true, notes: [first, second]); track.recordingFile = "take.wav"; track.recordingSeconds = 8; track.sourceStartBeat = 3; track.useOriginalAudio = true
+        let parts = MusicEdits.partition(track, ids: [second.id], name: "所选声音")
+        XCTAssertTrue(parts.1.muted); XCTAssertTrue(parts.1.solo); XCTAssertEqual(parts.1.volume, 0.23)
+        XCTAssertEqual(parts.1.recordingFile, "take.wav"); XCTAssertEqual(parts.1.notes[0].sourceFile, "take.wav"); XCTAssertEqual(parts.1.sourceStartBeat, 3)
+        XCTAssertEqual(parts.0.notes, [first]); XCTAssertEqual(parts.1.notes, [second]); XCTAssertNotEqual(parts.0.id, parts.1.id)
+        XCTAssertEqual(parts.0.useOriginalAudio, false); XCTAssertEqual(parts.1.useOriginalAudio, false)
+    }
+    @MainActor func testLegacyRecordingDurationAndFirstTrackRemovalRemainOwned() throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject(); p.recordingFile = "legacy.wav"; p.tracks[0].useOriginalAudio = true
+        try AudioRenderer.pcmWAV(Array(repeating: 0.1, count: 48000), rate: 16000).write(to: store.recordingDirectory.appendingPathComponent("legacy.wav"))
+        try store.save(p)
+        let loaded = try XCTUnwrap(ProjectStore(root: root).projects.first { $0.id == p.id })
+        XCTAssertEqual(loaded.tracks[0].recordingFile, "legacy.wav"); XCTAssertEqual(loaded.tracks[0].recordingSeconds, 3)
+        let session = EditorSession(loaded, store: store); session.edit { $0.tracks.append(MusicTrack()); $0.tracks.removeFirst() }
+        XCTAssertNil(session.project.recordingFile); XCTAssertNil(store.recordingURL(session.project, trackID: session.track.id))
+        session.undo(); XCTAssertEqual(store.recordingURL(session.project)?.lastPathComponent, "legacy.wav")
+        var unused = loaded; unused.tracks[0].useOriginalAudio = false; unused.tracks[0].recordingSeconds = 300
+        unused.tracks[0].notes = [MusicNote(midi: 60, start: 0, duration: 1)]
+        XCTAssertEqual(unused.seconds, 2.5); XCTAssertEqual(unused.beats, 4)
+    }
+    @MainActor func testPackageAndDuplicateFailuresRollBackAllNewAssetsAndNamesAreBounded() throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject(); p.name = String(repeating: "曲", count: 120); p.tracks[0].recordingFile = "source.wav"
+        p.tracks[0].notes = [MusicNote(midi: 64, start: 0, duration: 1, sourceFile: "source.wav")]
+        try AudioRenderer.pcmWAV([0, 0.1, 0], rate: 16000).write(to: store.recordingDirectory.appendingPathComponent("source.wav")); try store.save(p)
+        let packageURL = try store.package(p), data = try Data(contentsOf: packageURL); defer { try? FileManager.default.removeItem(at: packageURL) }
+        let backup = root.appendingPathComponent("backup"); try FileManager.default.moveItem(at: store.projectDirectory, to: backup); try Data().write(to: store.projectDirectory)
+        XCTAssertThrowsError(try store.duplicate(p)); XCTAssertThrowsError(try store.importPackage(data))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path), ["source.wav"]); XCTAssertTrue(store.unsavedProjects.isEmpty)
+        try FileManager.default.removeItem(at: store.projectDirectory); try FileManager.default.moveItem(at: backup, to: store.projectDirectory)
+        try store.duplicate(p)
+        let copy = try XCTUnwrap(store.projects.first { $0.id != p.id && $0.name.hasSuffix(" · 副本") })
+        XCTAssertEqual(copy.name.count, 120); XCTAssertNotEqual(copy.tracks[0].notes[0].sourceFile, "source.wav")
+        XCTAssertEqual(copy.tracks[0].notes[0].sourceFile, copy.tracks[0].recordingFile)
+        XCTAssertEqual(MusicProject.projectName(String(repeating: "名", count: 200)).count, 120)
+    }
+    func testMIDI128TracksShortNotesAndMixStatesRoundTrip() throws {
+        var p = MusicProject(); p.bpm = 120
+        p.tracks = (0..<128).map { i in MusicTrack(name: "声部 \(i)", instrument: Instrument.allCases[i % 3], volume: i == 0 ? 0 : 0.6, muted: i == 1, solo: i == 2, notes: [MusicNote(midi: 60, start: 0, duration: i == 3 ? 0.0001 : 0.03125)]) }
+        let data = try MIDI.export(p), roundTrip = try MIDI.parse(data)
+        XCTAssertEqual(roundTrip.tracks.count, 128)
+        for i in 0..<128 { XCTAssertEqual(roundTrip.tracks[i].instrument, p.tracks[i].instrument); XCTAssertEqual(roundTrip.tracks[i].volume, p.tracks[i].volume); XCTAssertEqual(roundTrip.tracks[i].muted, p.tracks[i].muted); XCTAssertEqual(roundTrip.tracks[i].solo, p.tracks[i].solo) }
+        XCTAssertEqual(roundTrip.tracks[0].notes[0].duration, 0.03125, accuracy: 0.00001)
+        XCTAssertEqual(roundTrip.tracks[3].notes[0].duration, 1.0 / 480, accuracy: 0.00001)
+        XCTAssertNil(data.range(of: Data([0x99, 60, 100])), "Pitched notes must not use GM drum channel 10")
+        XCTAssertNotNil(data.range(of: Data([0xff, 0x21, 1, 8])), "Tracks beyond fifteen need additional MIDI ports")
+        XCTAssertNotNil(data.range(of: Data([0xb0, 7, 0])), "Zero-volume track remains silent in external players")
+    }
+    func testFormatZeroSeparatesChannelsAndPreservesTempoMapTime() throws {
+        let events: [UInt8] = [0,255,81,3,7,161,32, 0,192,0, 0,193,24, 0,144,60,100, 131,96,128,60,0, 0,255,81,3,15,66,64, 0,145,64,100, 131,96,129,64,0, 0,255,47,0]
+        var data = Data([77,84,104,100,0,0,0,6,0,0,0,1,1,224,77,84,114,107,0,0,0,UInt8(events.count)]); data.append(contentsOf: events)
+        let p = try MIDI.parse(data)
+        XCTAssertEqual(p.tracks.count, 2); XCTAssertEqual(Set(p.tracks.map(\.instrument)), [.piano, .guitar])
+        let notes = p.tracks.flatMap(\.notes).sorted { $0.start < $1.start }
+        XCTAssertEqual(notes[0].duration * 60 / p.bpm, 0.5, accuracy: 0.000001)
+        XCTAssertEqual(notes[1].start * 60 / p.bpm, 0.5, accuracy: 0.000001); XCTAssertEqual(notes[1].duration * 60 / p.bpm, 1, accuracy: 0.000001)
+        XCTAssertTrue(p.source?.contains("变速 MIDI") == true)
+    }
+    func testNotationAndEndpointTrailingSlash() throws {
+        XCTAssertEqual(NoteNotation(duration: 0.25).flags, 2); XCTAssertEqual(NoteNotation(duration: 0.5).flags, 1)
+        XCTAssertEqual(NoteNotation(duration: 0.25).rest, "𝄿"); XCTAssertEqual(NoteNotation(duration: 2).rest, "𝄼"); XCTAssertEqual(NoteNotation(duration: 4).rest, "𝄻")
+        XCTAssertTrue(NoteNotation(duration: 0.75).dotted)
+        var settings = RecognitionSettings(); settings.baseURL = "https://example.com/v1/chat/completions/"
+        XCTAssertEqual(try settings.endpoint().absoluteString, "https://example.com/v1/chat/completions")
+        settings.baseURL = "https://example.com/v1/"; XCTAssertEqual(try settings.endpoint().absoluteString, "https://example.com/v1/chat/completions")
+    }
+}
+
+final class ScoreBoundsTests: XCTestCase {
+    func testEverySupportedPitchHasAVisibleAndTappableScorePosition() {
+        let notes = (0...127).map { MusicNote(midi: $0, start: Double($0), duration: 0.25) }
+        let geometry = ScoreGeometry(notes: notes)
+        for note in notes { XCTAssertGreaterThanOrEqual(geometry.y(note) - 22, 0); XCTAssertLessThanOrEqual(geometry.y(note) + 22, geometry.height) }
     }
 }

@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
     @State private var saveFailure = false
     @State private var renaming = false
     @State private var newName = ""
+    @State private var noteEntry = false
     @State private var overflow: Double?
     @State private var processing = false
     @State private var analysis: Task<Void, Never>?
@@ -127,10 +128,12 @@ import UniformTypeIdentifiers
                         Button("换种声音") { instruments = true }.frame(minHeight: 44).buttonStyle(.bordered)
                     } }
                     if rawMode == StudioMode.simple.rawValue { Button(expandedTools ? "收起更多工具" : "展开更多工具") { expandedTools.toggle() }.frame(minHeight: 44) }
+                    Button { noteEntry = true } label: { Label("按选项添加声音", systemImage: "plus.circle").frame(minHeight: 44) }.accessibilityIdentifier("editor.noteEntry")
                     Label("原始录音与可编辑旋律分开保留", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
     }
     private var editorPresentations: some View {
         editorContent
+        .sheet(isPresented: $noteEntry) { NoteEntrySheet(bpm: session.project.bpm, startBeat: session.track.notes.map { $0.start + $0.duration }.max() ?? 0, professional: professional) { pitch, start, duration in session.addNote(midi: pitch, start: start, duration: duration) } }
         .sheet(isPresented: $instruments) { InstrumentSheet(selectedNote: session.selected != nil, bars: session.project.bars, current: session.track.instrument, professional: professional, onApply: applyInstrument) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
         .sheet(isPresented: $modelSettings) { NavigationStack { RecognitionSettingsView() } }
@@ -169,9 +172,9 @@ import UniformTypeIdentifiers
     private var playbackBar: some View {
         HStack(spacing: 20) {
             Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 44, height: 44) }.accessibilityLabel("回到起点")
-            Button { Task { do { audio.loop = loop; try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id).frame(width: 44, height: 44) }.buttonStyle(.borderedProminent).accessibilityLabel("播放或暂停")
+            Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderedProminent).accessibilityLabel("播放或暂停")
             Text(professional ? "第 \(min(session.project.bars, Int(audio.playbackSeconds * session.project.bpm / 240) + 1)) / \(session.project.bars) 小节" : musicTime(audio.playbackSeconds) + " / " + musicTime(session.project.seconds)).font(.caption).foregroundStyle(.secondary)
-            Button { loop.toggle(); audio.loop = loop; audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
+            Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
         }.frame(maxWidth: .infinity)
     }
     private func moveMelodyNote(_ id: UUID, _ steps: Int) {
@@ -195,8 +198,8 @@ import UniformTypeIdentifiers
             if standard {
                 HStack { Button("短一点") { session.editNote { $0.duration = max(0.125, $0.duration / 2) } }; Button("长一点") { session.editNote { $0.duration = min(32, $0.duration * 2) } }; Spacer(); Button("删除", role: .destructive) { session.deleteNote() } }.frame(minHeight: 44)
                 if session.selected?.confidence ?? 1 < 0.8 { Text("这一处可能没听清，可以对照录音再调整。").font(.caption).foregroundStyle(.secondary) }
-                if let note = session.selected, let url = session.store.recordingURL(session.project, trackID: session.track.id) {
-                    Button("听对应的原录音") { do { try audio.playOriginal(url, from: note.rawStart ?? max(0, note.start - (session.track.sourceStartBeat ?? 0)) * 60 / session.project.bpm, length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } }.frame(minHeight: 44)
+                if let note = session.selected, let url = session.store.noteRecordingURL(session.project, trackID: session.track.id, note: note) {
+                    Button("听对应的原录音") { do { try audio.playOriginal(url, from: MusicEdits.originalStart(note, track: session.track, bpm: session.project.bpm), length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } }.frame(minHeight: 44)
                 }
             } else { Button("删除这个声音", role: .destructive) { session.deleteNote() }.frame(minHeight: 44) }
         }.musicCard(radius: 16)
@@ -210,7 +213,7 @@ import UniformTypeIdentifiers
                     Picker("时值", selection: Binding(get: { session.selected?.duration ?? 1 }, set: { changeDuration($0) })) { ForEach([0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4], id: \.self) { Text("\($0, specifier: "%.2f") 拍").tag($0) }; if ![0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].contains(note.duration) { Text("原始时值").tag(note.duration) } }.pickerStyle(.menu)
                 }
                 ScrollView(.horizontal, showsIndicators: false) { HStack {
-                    if session.store.recordingURL(session.project, trackID: session.track.id) != nil { Button("试听原声") { if let url = session.store.recordingURL(session.project, trackID: session.track.id) { do { try audio.playOriginal(url, from: note.rawStart ?? note.start * 60 / session.project.bpm, length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } } }.frame(minHeight: 44) }
+                    if session.store.recordingURL(session.project, trackID: session.track.id) != nil { Button("试听原声") { if let url = session.store.noteRecordingURL(session.project, trackID: session.track.id, note: note) { do { try audio.playOriginal(url, from: MusicEdits.originalStart(note, track: session.track, bpm: session.project.bpm), length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } } }.frame(minHeight: 44) }
                     Button("↑ 八度") { session.editNote { if let m = $0.midi { $0.midi = min(127, m + 12) } } }.frame(minHeight: 44)
                     Button("↓ 八度") { session.editNote { if let m = $0.midi { $0.midi = max(0, m - 12) } } }.frame(minHeight: 44)
                     Button("拆分") { splitNote() }.frame(minHeight: 44)
@@ -239,11 +242,18 @@ import UniformTypeIdentifiers
         session.selectedNote = id
         session.editNote { note in guard note.midi != nil else { return }; let position = max(0, min(74, note.staffPosition + steps)); note.midi = max(0, min(127, position / 7 * 12 + [0, 2, 4, 5, 7, 9, 11][position % 7])); note.confidence = 1 }
     }
-    private func splitNote() { guard let note = session.selected else { return }; let index = session.trackIndex; session.edit { p in guard let i = p.tracks[index].notes.firstIndex(where: { $0.id == note.id }) else { return }; p.tracks[index].notes[i].duration /= 2; var n = note; n.id = UUID(); n.start += note.duration / 2; n.duration /= 2; p.tracks[index].notes.append(n) } }
+    private func splitNote() {
+        guard let note = session.selected else { return }; let index = session.trackIndex
+        let parts = MusicEdits.split(note)
+        session.edit { p in guard let i = p.tracks[index].notes.firstIndex(where: { $0.id == note.id }) else { return }; p.tracks[index].notes[i] = parts.0; p.tracks[index].notes.append(parts.1) }
+    }
     private func mergeNote() {
         guard let note = session.selected else { return }; let sorted = session.track.notes.sorted { $0.start < $1.start }
         guard let i = sorted.firstIndex(where: { $0.id == note.id }), i + 1 < sorted.count else { return }; let next = sorted[i + 1], t = session.trackIndex
-        session.edit { p in guard let n = p.tracks[t].notes.firstIndex(where: { $0.id == note.id }) else { return }; p.tracks[t].notes[n].duration = next.start + next.duration - note.start; p.tracks[t].notes.removeAll { $0.id == next.id } }
+        do {
+            let merged = try MusicEdits.merged(note, next)
+            session.edit { p in guard let n = p.tracks[t].notes.firstIndex(where: { $0.id == note.id }) else { return }; p.tracks[t].notes[n] = merged; p.tracks[t].notes.removeAll { $0.id == next.id } }
+        } catch { session.store.error = error.localizedDescription }
     }
     private func copyBar() { let bar = floor((session.selected?.start ?? 0) / 4), end = Double(session.project.bars) * 4, notes = session.track.notes.filter { floor($0.start / 4) == bar }, t = session.trackIndex; session.edit { p in p.tracks[t].notes += notes.map { var n = $0; n.id = UUID(); n.start = n.start - bar * 4 + end; return n } } }
     private func applyInstrument(_ instrument: Instrument, _ scope: String, _ start: Int, _ end: Int) {
@@ -252,8 +262,11 @@ import UniformTypeIdentifiers
             if scope == "整条轨道" { p.tracks[t].instrument = instrument; p.tracks[t].useOriginalAudio = false }
             else {
                 let chosen = p.tracks[t].notes.filter { scope == "选中音符" ? $0.id == selected : $0.start >= Double(start - 1) * 4 && $0.start < Double(end) * 4 }
-                guard !chosen.isEmpty else { return }; let ids = Set(chosen.map(\.id)); p.tracks[t].notes.removeAll { ids.contains($0.id) }
-                p.tracks.append(MusicTrack(name: scope == "选中音符" ? "选中音符配器" : "第 \(start)–\(end) 小节", instrument: instrument, volume: p.tracks[t].volume, notes: chosen, assignment: "移动原轨音符 · \(scope) · \(start)–\(end) 小节"))
+                guard !chosen.isEmpty else { return }
+                let pieces = MusicEdits.partition(p.tracks[t], ids: Set(chosen.map(\.id)), name: scope == "选中音符" ? "选中的声音" : "第 \(start)–\(end) 小节")
+                p.tracks[t] = pieces.0
+                var part = pieces.1; part.instrument = instrument; part.assignment = "移动原轨音符 · \(scope) · \(start)–\(end) 小节"
+                p.tracks.append(part)
             }
         }; instruments = false
     }
@@ -261,7 +274,7 @@ import UniformTypeIdentifiers
     private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
     private func exportWAV() async {
         processing = true; stage = "正在生成可以播放的音频…"; defer { processing = false }; let p = session.project, recordingRoot = session.store.recordingDirectory
-        do { let data = try await Task.detached { try AudioRenderer.wav(p, recordingDirectory: recordingRoot) }.value; let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
+        do { let data = try await AudioRenderer.render(p, recordingDirectory: recordingRoot); let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
     }
     private func analyzeOriginal() {
         let track = session.track
@@ -273,7 +286,7 @@ import UniformTypeIdentifiers
                 let result = try await RecognitionService.analyze(url: url, bpm: bpm, free: free, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity)
                 try Task.checkCancellation()
                 session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) {
-                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += track.sourceStartBeat ?? 0; return n }
+                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += track.sourceStartBeat ?? 0; n.sourceFile = track.recordingFile; return n }
                     p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.tracks[i].useOriginalAudio = false
                 } }
             } catch { if !Task.isCancelled { session.store.error = error.localizedDescription } }
@@ -309,22 +322,20 @@ import UniformTypeIdentifiers
                 session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { let offset = p.tracks[i].sourceStartBeat ?? 0; p.tracks[i].notes += first.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].instrument = first.instrument; p.tracks[i].recognitionSource = "MIDI 导入 · 使用项目节拍" }; p.tracks.append(contentsOf: imported.tracks.dropFirst()) }
                 return
             }
-            let name = UUID().uuidString + "." + url.pathExtension.lowercased(), target = session.store.recordingDirectory.appendingPathComponent(name)
-            try FileManager.default.copyItem(at: url, to: target)
-            session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
-                if let old = p.tracks[i].recordingFile { p.tracks[i].sourceHistory = (p.tracks[i].sourceHistory ?? []) + [old] }
-                p.tracks[i].recordingFile = name; p.tracks[i].recordingSeconds = nil; p.tracks[i].trimStart = nil; p.tracks[i].trimEnd = nil; p.tracks[i].useOriginalAudio = true
-            } }
-            let decoded = try await Task.detached { try AudioController.samples(from: target) }.value
-            let duration = Double(decoded.samples.count) / decoded.sampleRate
-            session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { p.tracks[i].recordingSeconds = duration } }
+            let prepared = try await AudioImport.prepare(url, directory: session.store.recordingDirectory)
+            var committed = false; defer { if !committed { prepared.discard() } }
+            let name = prepared.name, target = prepared.url
+            guard session.edit({ p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
+                MusicEdits.attachOriginal(&p.tracks[i], file: name, duration: prepared.duration)
+            } }) else { throw MusicError.invalidProject }
+            committed = true
             stage = "原声已保存，正在生成候选乐谱…"
             do {
                 let result = try await RecognitionService.analyze(url: target, bpm: session.project.bpm, free: true)
                 try Task.checkCancellation()
                 session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
                     let offset = p.tracks[i].sourceStartBeat ?? 0
-                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.freeRhythm = true
+                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += offset; n.sourceFile = name; return n }; p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.freeRhythm = true
                 } }
             } catch { session.store.error = "原声已保留，可以独立回放、裁剪或手动写谱。识谱未完成：" + error.localizedDescription }
             selectTrack(id); multiTrack = true
@@ -352,11 +363,15 @@ struct ScoreCanvas: View {
     var notes: [MusicNote]; var bars: Int; var selected: UUID?; var addMode: Bool
     var onSelect: (UUID) -> Void; var onAdd: (Int, Double) -> Void; var onMove: (UUID, Int) -> Void
     private var width: CGFloat { max(800, CGFloat(bars) * 210 + 100) }
-    private func point(_ note: MusicNote) -> CGPoint { CGPoint(x: 120 + note.start * 52.5, y: 128 - Double(note.staffPosition - 37) * 6) }
+    private func basePoint(_ note: MusicNote) -> CGPoint { CGPoint(x: 120 + note.start * 52.5, y: ScoreGeometry.rawY(note)) }
+    private var verticalOffset: CGFloat { ScoreGeometry(notes: notes).offset }
+    private var height: CGFloat { ScoreGeometry(notes: notes).height }
+    private func point(_ note: MusicNote) -> CGPoint { let base = basePoint(note); return CGPoint(x: base.x, y: base.y + verticalOffset) }
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             ZStack(alignment: .topLeading) {
                 Canvas { context, size in
+                    context.translateBy(x: 0, y: verticalOffset)
                     var lines = Path(); for i in 0..<5 { let y = CGFloat(80 + i * 12); lines.move(to: CGPoint(x: 20, y: y)); lines.addLine(to: CGPoint(x: size.width - 20, y: y)) }; context.stroke(lines, with: .color(.gray.opacity(0.7)), lineWidth: 0.8)
                     context.draw(Text("𝄞").font(.system(size: 67)).foregroundStyle(Palette.ink), at: CGPoint(x: 49, y: 107))
                     context.draw(Text("4\n4").font(.system(size: 19)).foregroundStyle(Palette.ink), at: CGPoint(x: 87, y: 103))
@@ -365,22 +380,26 @@ struct ScoreCanvas: View {
                         context.draw(Text("\(bar + 1)").font(.system(size: 11)).foregroundStyle(.gray), at: CGPoint(x: x + 8, y: 57))
                     }
                     for note in notes {
-                        let p = point(note), color = note.id == selected ? Color(red: 0.64, green: 0.5, blue: 0.12) : Palette.ink
-                        if note.midi == nil { context.draw(Text("𝄽").font(.system(size: 30)).foregroundStyle(color), at: CGPoint(x: p.x, y: 104)); continue }
+                        let p = basePoint(note), color = note.id == selected ? Color(red: 0.64, green: 0.5, blue: 0.12) : Palette.ink
+                        let appearance = NoteNotation(duration: note.duration)
+                        if note.midi == nil { context.draw(Text(appearance.rest).font(.system(size: 30)).foregroundStyle(color), at: CGPoint(x: p.x, y: 104)); if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: 100, width: 4, height: 4)), with: .color(color)) }; continue }
                         if p.y > 128 { for y in stride(from: CGFloat(140), through: p.y + 2, by: 12) { var ledger = Path(); ledger.move(to: CGPoint(x: p.x - 12, y: y)); ledger.addLine(to: CGPoint(x: p.x + 12, y: y)); context.stroke(ledger, with: .color(color), lineWidth: 1) } }
                         if p.y < 80 { for y in stride(from: CGFloat(68), through: p.y - 2, by: -12) { var ledger = Path(); ledger.move(to: CGPoint(x: p.x - 12, y: y)); ledger.addLine(to: CGPoint(x: p.x + 12, y: y)); context.stroke(ledger, with: .color(color), lineWidth: 1) } }
-                        let ellipse = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10)); if note.duration < 2 { context.fill(ellipse, with: .color(color)) } else { context.stroke(ellipse, with: .color(color), lineWidth: 1.7) }
-                        if note.duration < 4 { var stem = Path(); stem.move(to: CGPoint(x: p.x + 6, y: p.y)); stem.addLine(to: CGPoint(x: p.x + 6, y: p.y - 32)); context.stroke(stem, with: .color(color), lineWidth: 1.5) }
-                        if note.duration <= 0.5 { var flag = Path(); flag.move(to: CGPoint(x: p.x + 6, y: p.y - 32)); flag.addQuadCurve(to: CGPoint(x: p.x + 7, y: p.y - 10), control: CGPoint(x: p.x + 25, y: p.y - 21)); context.stroke(flag, with: .color(color), lineWidth: 1.7) }
+                        let ellipse = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10)); if appearance.filled { context.fill(ellipse, with: .color(color)) } else { context.stroke(ellipse, with: .color(color), lineWidth: 1.7) }
+                        if appearance.stem { var stem = Path(); stem.move(to: CGPoint(x: p.x + 6, y: p.y)); stem.addLine(to: CGPoint(x: p.x + 6, y: p.y - 32)); context.stroke(stem, with: .color(color), lineWidth: 1.5) }
+                        for level in 0..<appearance.flags {
+                            let top = p.y - 32 + CGFloat(level) * 7
+                            var flag = Path(); flag.move(to: CGPoint(x: p.x + 6, y: top)); flag.addQuadCurve(to: CGPoint(x: p.x + 7, y: top + 22), control: CGPoint(x: p.x + 25, y: top + 11)); context.stroke(flag, with: .color(color), lineWidth: 1.7)
+                        }
                         if [1, 3, 6, 8, 10].contains((note.midi ?? 0) % 12) { context.draw(Text("♯").font(.system(size: 19)).foregroundStyle(color), at: CGPoint(x: p.x - 18, y: p.y)) }
-                        if [0.75, 1.5, 3].contains(note.duration) { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: p.y - 4, width: 4, height: 4)), with: .color(color)) }
+                        if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: p.y - 4, width: 4, height: 4)), with: .color(color)) }
                         if note.confidence < 0.8 { context.stroke(Path(ellipseIn: CGRect(x: p.x - 13, y: p.y - 11, width: 26, height: 22)), with: .color(Color(red: 0.74, green: 0.59, blue: 0.19)), lineWidth: 2) }
                         if note.tied { var tie = Path(); tie.move(to: CGPoint(x: p.x + 8, y: p.y + 12)); tie.addQuadCurve(to: CGPoint(x: min(size.width - 25, p.x + CGFloat(note.duration) * 52.5), y: p.y + 12), control: CGPoint(x: p.x + CGFloat(note.duration) * 26, y: p.y + 30)); context.stroke(tie, with: .color(color), lineWidth: 1.4) }
                     }
                 }
-                if addMode { Color.clear.contentShape(Rectangle()).gesture(SpatialTapGesture().onEnded { value in let beat = max(0, ((Double(value.location.x) - 120) / 52.5 * 4).rounded() / 4), position = max(0, min(74, Int(((128 - value.location.y) / 6).rounded()) + 37)), midi = position / 7 * 12 + [0, 2, 4, 5, 7, 9, 11][position % 7]; onAdd(min(127, midi), beat) }) }
-                ForEach(notes) { note in let p = point(note); Button { onSelect(note.id) } label: { Color.clear.frame(width: 44, height: 44).contentShape(Rectangle()) }.position(p).accessibilityLabel("\(note.pitchName)，\(note.duration.formatted()) 拍").simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in let steps = Int((-value.translation.height / 6).rounded()); if steps != 0 { onMove(note.id, steps) } }) }
-            }.frame(width: width, height: 235).padding(.vertical, 8)
+                if addMode { Color.clear.contentShape(Rectangle()).gesture(SpatialTapGesture().onEnded { value in let beat = max(0, ((Double(value.location.x) - 120) / 52.5 * 4).rounded() / 4), position = max(0, min(74, Int(((128 + verticalOffset - value.location.y) / 6).rounded()) + 37)), midi = position / 7 * 12 + [0, 2, 4, 5, 7, 9, 11][position % 7]; onAdd(min(127, midi), beat) }) }
+                ForEach(notes) { note in let p = point(note); Button { onSelect(note.id) } label: { Color.clear.frame(width: 44, height: 44).contentShape(Rectangle()) }.position(p).accessibilityLabel("\(note.pitchName)，\(note.duration.formatted()) 拍").accessibilitySortPriority(-note.start).accessibilityAdjustableAction { direction in if direction == .increment { onMove(note.id, 1) }; if direction == .decrement { onMove(note.id, -1) } }.simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in let steps = Int((-value.translation.height / 6).rounded()); if steps != 0 { onMove(note.id, steps) } }) }
+            }.frame(width: width, height: height).padding(.vertical, 8)
         }.background(Color(red: 0.92, green: 0.9, blue: 0.86), in: RoundedRectangle(cornerRadius: 20)).clipShape(RoundedRectangle(cornerRadius: 20))
     }
 }

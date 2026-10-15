@@ -1,0 +1,35 @@
+name: Native UI Diagnostics
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Native test run with retained xcresult'
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  review:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: StarMusic-TestResults
+          path: results
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Export actual native screenshots for review
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          RESULT_PATH=results
+          if [ -d results/TestResults.xcresult ]; then RESULT_PATH=results/TestResults.xcresult; fi
+          if [ "$RESULT_PATH" = results ]; then mv results TestResults.xcresult; RESULT_PATH=TestResults.xcresult; fi
+          xcrun xcresulttool export attachments --path "$RESULT_PATH" --output-path ui
+          SOURCE_SHA=$(gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID" --jq .head_sha)
+          gh release create "diagnostic-ui-$SOURCE_RUN_ID" ui/*.png ui/*.json --prerelease --target "$SOURCE_SHA" --title "Native UI diagnostics $SOURCE_RUN_ID" --notes 'Actual screenshots from a failed native test run, for debugging only. No successful build or installable app is claimed.'
