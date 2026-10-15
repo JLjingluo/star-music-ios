@@ -1,4 +1,4 @@
-# Star Music iOS · v0.5.0
+# Star Music iOS · v0.6.0
 
 原生 SwiftUI + AVFoundation，支持 iOS 17 及以上 iPhone / iPad。离线录音、乐谱编辑、逐轨编曲与草稿保存使用同一份项目数据。
 
@@ -10,7 +10,7 @@
 - 用户可配置 HTTPS API 地址、支持音频的模型/接入点 ID 和设备 Keychain 密钥。支持方舟兼容的 Chat Completions `input_audio` WAV/Base64；不假定任何特定豆包型号具有音频能力。文字识别与音乐识谱分开，前者不替换音符。
 - 每轨可命名、编辑音符、单独录唱、导入音频/MIDI、静音、独奏及调音量。原声与乐器播放可切换；所有轨道共享 PCM 时间线，历史原声可回听。
 - v2 项目包保留所有轨道、原声、历史原声、配器和识谱修订，并兼容旧包。独立复制项目会复制原声文件；密钥不进入草稿或项目包。
-- 首页仅一个底部导航，工作区隐藏；深浅色、有限的分层入场、按压反馈、搜索展开和草稿网格切换尊重动态字号、VoiceOver 与减少动态效果。
+- 全面使用系统 TabView / NavigationStack、原生返回和侧滑、List / Form / Section、searchable、Toggle / Picker / Menu。iOS 26 的导航和系统弹层由系统提供材质及动画；工作区隐藏底栏，谱面、真实波形和旋律图保留自定义绘制。
 
 音频导入最多 256 MB，项目包最多 512 MB（原声合计 256 MB），识谱最多 5 分钟，导出最多 10 分钟；项目最多 128 轨。BPM 改变音符播放节奏，但不自动拉伸原声音频。内置钢琴、木吉他和合成器为实际合成音色，不是假装下载的采样库。
 
@@ -26,7 +26,7 @@ v0.5.0 build 6 已实际通过 macOS 15 / Xcode 16.4 编译、27 项 XCTest 与 
 
 ## 在 Mac 上打开
 
-工程包中已包含 StarMusic.xcodeproj，可在 Mac 上用 Xcode 16.4 或更新版本直接打开。需要重新生成时，可以使用 XcodeGen：
+工程包中已包含 StarMusic.xcodeproj，可在 Mac 上用 Xcode 26.2 或更新版本直接打开。需要重新生成时，可以使用 XcodeGen：
 
 ```sh
 brew install xcodegen

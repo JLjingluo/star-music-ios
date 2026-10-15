@@ -37,13 +37,62 @@ import UniformTypeIdentifiers
     private var simpleMode: Bool { rawMode == StudioMode.simple.rawValue && !expandedTools }
     init(project: MusicProject, store: ProjectStore) { _session = StateObject(wrappedValue: EditorSession(project, store: store)) }
     var body: some View {
+        editorPresentations
+        .navigationTitle(session.project.name)
+        .alert("项目名称", isPresented: $renaming) {
+            TextField("名称", text: $newName)
+            Button("保存") { session.edit { $0.name = newName.isEmpty ? "未命名的旋律" : String(newName.prefix(60)) } }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
+        .alert("发布服务尚未接入", isPresented: $publish) { Button("导出 WAV 分享") { Task { await exportWAV() } }; Button("继续创作", role: .cancel) {} } message: { Text("作品仍是本地草稿。你可以导出音频分享，不会显示模拟发布成功。") }
+        .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text("当前编辑仍保留在本次运行的内存中。返回草稿后也可重新打开重试；请勿强制退出或删除应用。") }
+        .sheet(isPresented: $transpose) { KeyShiftSheet(project: session.project, recordingDirectory: session.store.recordingDirectory, professional: professional) { shifted in session.edit { $0 = shifted } }.presentationDetents([.large]) }
+        .confirmationDialog("音符时值跨越小节", isPresented: Binding(get: { overflow != nil }, set: { if !$0 { overflow = nil } }), titleVisibility: .visible) {
+            Button("后移到下一小节") { if let d = overflow { session.editNote { $0.start = (floor($0.start / 4) + 1) * 4; $0.duration = d }; overflow = nil } }
+            Button("保留跨小节延音") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
+            Button("取消", role: .cancel) { overflow = nil }
+        }
+        .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
+        .sheet(isPresented: $processing) { ProcessingView(stage: stage, onCancel: analysis == nil ? nil : { analysis?.cancel(); analysis = nil; processing = false }) }
+        .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
+        .onDisappear { audio.stopPlayback(); analysis?.cancel(); session.persist() }
+    }
+    private var editorContent: some View {
         ScrollView {
                 VStack(spacing: 18) {
-                    HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); Button(session.saveStatus) { if !session.persist() { saveFailure = true } }.font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("editor.saveStatus") }
+                    editorHeader
+                    melodyContent
+                    playbackBar
+                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("editor.keyShift")
+                    editingTools
+                }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
+            }.background(Palette.background(scheme))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { editorToolbar }
+    }
+    @ToolbarContentBuilder private var editorToolbar: some ToolbarContent {
+                ToolbarItem(placement: .topBarTrailing) { StudioModeMenu() }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("重命名", systemImage: "pencil") { newName = session.project.name; renaming = true }
+                        Button("保存到本机", systemImage: "checkmark") { if !session.persist() { saveFailure = true } }
+                    } label: { Label("项目选项", systemImage: "ellipsis") }
+                }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Button { audio.stopPlayback(); session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.disabled(session.undoHistory.isEmpty).accessibilityLabel("撤销")
+                    Button { audio.stopPlayback(); session.redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44) }.disabled(session.redoHistory.isEmpty).accessibilityLabel("重做")
+                    Spacer(); Button(professional ? "导出" : "保存与分享") { export = true }.frame(minHeight: 44); if professional { Button("发布") { publish = true }.frame(minHeight: 44) }
+                }
+            }
+    @ViewBuilder private var editorHeader: some View {
+                    HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); Button(session.saveStatus) { if !session.persist() { saveFailure = true } }.font(.caption).frame(minHeight: 44).foregroundStyle(.secondary).accessibilityIdentifier("editor.saveStatus") }
                     if professional { parameterBar }
                     if standard { Text("下面的线条表示旋律高低，往右就是后面的声音。你可以先听，再轻点一个片段修改。").font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() }
                     Picker("编辑视图", selection: $multiTrack) { Text(professional ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各个声音").tag(true) }.pickerStyle(.segmented)
+    }
+    @ViewBuilder private var melodyContent: some View {
                     if multiTrack { trackList }
                     else {
                         if professional {
@@ -55,8 +104,8 @@ import UniformTypeIdentifiers
                         if session.selected != nil { noteInspector.transition(.opacity.combined(with: .move(edge: .top))) }
                         else if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
-                    playbackBar
-                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("editor.keyShift")
+    }
+    @ViewBuilder private var editingTools: some View {
                     if !simpleMode { LazyVGrid(columns: [GridItem(.adaptive(minimum: 135))], spacing: 10) {
                         ToolCard(title: addMode ? "结束添加" : professional ? "添加音符" : "写一个声音", subtitle: professional ? "明确的添加模式" : "轻点旋律图，写下声音", symbol: "plus") { addMode.toggle() }.accessibilityIdentifier("editor.addNote")
                         ToolCard(title: "乐器", subtitle: session.track.instrument.name, symbol: session.track.instrument.symbol) { instruments = true }
@@ -79,29 +128,9 @@ import UniformTypeIdentifiers
                     } }
                     if rawMode == StudioMode.simple.rawValue { Button(expandedTools ? "收起更多工具" : "展开更多工具") { expandedTools.toggle() }.frame(minHeight: 44) }
                     Label("原始录音与可编辑旋律分开保留", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
-                }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
-            }.background(Palette.background(scheme))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { StudioModeMenu() }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("重命名", systemImage: "pencil") { newName = session.project.name; renaming = true }
-                        Button("保存到本机", systemImage: "checkmark") { if !session.persist() { saveFailure = true } }
-                    } label: { Label("项目选项", systemImage: "ellipsis") }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button { audio.stopPlayback(); session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.disabled(session.undoHistory.isEmpty).accessibilityLabel("撤销")
-                    Button { audio.stopPlayback(); session.redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44) }.disabled(session.redoHistory.isEmpty).accessibilityLabel("重做")
-                    Spacer(); Button(professional ? "导出" : "保存与分享") { export = true }.frame(minHeight: 44); if professional { Button("发布") { publish = true }.frame(minHeight: 44) }
-                }
-            }
-        .navigationTitle(session.project.name)
-        .alert("项目名称", isPresented: $renaming) {
-            TextField("名称", text: $newName)
-            Button("保存") { session.edit { $0.name = newName.isEmpty ? "未命名的旋律" : String(newName.prefix(60)) } }
-            Button("取消", role: .cancel) {}
-        }
+    }
+    private var editorPresentations: some View {
+        editorContent
         .sheet(isPresented: $instruments) { InstrumentSheet(selectedNote: session.selected != nil, bars: session.project.bars, current: session.track.instrument, professional: professional, onApply: applyInstrument) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
         .sheet(isPresented: $modelSettings) { NavigationStack { RecognitionSettingsView() } }
@@ -112,19 +141,6 @@ import UniformTypeIdentifiers
             switch result { case .success(let urls): if let url = urls.first { Task { await importToTrack(url) } }; case .failure(let error): session.store.error = error.localizedDescription }
         }
 
-        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
-        .alert("发布服务尚未接入", isPresented: $publish) { Button("导出 WAV 分享") { Task { await exportWAV() } }; Button("继续创作", role: .cancel) {} } message: { Text("作品仍是本地草稿。你可以导出音频分享，不会显示模拟发布成功。") }
-        .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text("当前编辑仍保留在本次运行的内存中。返回草稿后也可重新打开重试；请勿强制退出或删除应用。") }
-        .sheet(isPresented: $transpose) { KeyShiftSheet(project: session.project, recordingDirectory: session.store.recordingDirectory, professional: professional) { shifted in session.edit { $0 = shifted } }.presentationDetents([.large]) }
-        .confirmationDialog("音符时值跨越小节", isPresented: Binding(get: { overflow != nil }, set: { if !$0 { overflow = nil } }), titleVisibility: .visible) {
-            Button("后移到下一小节") { if let d = overflow { session.editNote { $0.start = (floor($0.start / 4) + 1) * 4; $0.duration = d }; overflow = nil } }
-            Button("保留跨小节延音") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
-            Button("取消", role: .cancel) { overflow = nil }
-        }
-        .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
-        .sheet(isPresented: $processing) { ProcessingView(stage: stage, onCancel: analysis == nil ? nil : { analysis?.cancel(); analysis = nil; processing = false }) }
-        .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
-        .onDisappear { audio.stopPlayback(); analysis?.cancel(); session.persist() }
     }
     private var addTrackSheet: some View {
         NavigationStack {
