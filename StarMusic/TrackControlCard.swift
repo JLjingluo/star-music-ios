@@ -26,7 +26,7 @@ struct TrackControlCard: View {
                 Button(action: onEdit) {
                     VStack(alignment: .leading, spacing: 5) { Text(track.name).font(.headline); Text(track.instrument.name + " · \(track.notes.filter { $0.midi != nil }.count) 个音符").font(.caption).foregroundStyle(.secondary) }
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }.buttonStyle(MusicPressStyle()).accessibilityLabel("编辑 \(track.name) 的音符")
+                }.buttonStyle(.plain).accessibilityLabel("编辑 \(track.name) 的音符")
                 Menu {
                     Button("重命名") { name = track.name; rename = true }
                     Button("在此轨道录唱", action: onRecord)

@@ -43,7 +43,7 @@ import SwiftUI
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
-                        Button { Task { await begin() } } label: { Circle().fill(Color(red: 0.88, green: 0.57, blue: 0.53)).frame(width: 64, height: 64).padding(8).overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1)) }.accessibilityLabel("开始录音")
+                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.buttonStyle(.borderedProminent).tint(.red).accessibilityIdentifier("recording.start")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.buttonStyle(.bordered).frame(minHeight: 44)
@@ -51,9 +51,9 @@ import SwiftUI
                         }
                     } else { GoldButton(title: "继续编辑", symbol: "music.note") { if saveRecordingMetadata() { edit() } } }
                     Text("在安静环境中，清晰地哼唱一条旋律。\n首版支持单声部哼唱，不承诺识别复杂歌曲。\n原始录音保存在本机，最长支持 5 分钟转谱。").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(5)
-                }.padding(24).frame(maxWidth: 850).frame(maxWidth: .infinity).musicCard(radius: 24).padding(16)
+                }.padding(24).frame(maxWidth: 850).frame(maxWidth: .infinity).padding(16)
             }.background(Palette.background(scheme)).navigationTitle(project.name).navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarLeading) { Button { if createdFile != nil { audio.pauseRecording(); saveRecordingMetadata(); leaving = true } else { dismiss() } } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("关闭录音页面") } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { if createdFile != nil { audio.pauseRecording(); saveRecordingMetadata(); leaving = true } else { dismiss() } }.accessibilityIdentifier("recording.cancel") } }
         }
         .interactiveDismissDisabled(createdFile != nil)
         .onAppear { audio.stopPlayback(); audio.resetRecording() }
@@ -70,13 +70,21 @@ import SwiftUI
             Button("放弃本次录音", role: .destructive) { discardTake() }
             Button("取消", role: .cancel) {}
         }
-        .overlay {
-            if processing {
-                VStack(spacing: 20) { ProgressView(); Text(stage).font(.subheadline); Button("取消分析，保留原始录音") { task?.cancel(); task = nil; processing = false; if saveRecordingMetadata() { edit() } }.frame(minHeight: 44) }.padding(30).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24)).frame(maxWidth: .infinity, maxHeight: .infinity).background(.black.opacity(0.45)).ignoresSafeArea()
-            }
-        }
+        .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: "取消分析，保留原始录音") { task?.cancel(); task = nil; processing = false; if saveRecordingMetadata() { edit() } } }
         .alert("识谱未完成", isPresented: $failedAnalysis) { Button("重新分析") { analyze() }; Button("截取片段") { trimEnd = project.tracks[trackIndex].recordingSeconds ?? 10; trim = true }; Button("手动写谱") { edit() } } message: { Text(analysisError ?? "原始录音仍保留，可重新分析或手动写谱。") }
-        .sheet(isPresented: $trim) { VStack(alignment: .leading, spacing: 24) { Text("截取清晰片段").font(.title2.bold()); Text("只分析这个范围，完整原录音仍会保留。").font(.caption).foregroundStyle(.secondary); Stepper("起始 \(trimStart, specifier: "%.1f") 秒", value: $trimStart, in: 0...max(0, (project.tracks[trackIndex].recordingSeconds ?? 10) - 0.2), step: 0.1); Stepper("结束 \(trimEnd, specifier: "%.1f") 秒", value: $trimEnd, in: 0.2...max(0.2, project.tracks[trackIndex].recordingSeconds ?? 10), step: 0.1); GoldButton(title: "分析片段", symbol: "waveform") { if trimEnd > trimStart { trim = false; analyze(start: trimStart, end: trimEnd) } else { error = "结束时间需要大于开始时间。" } } }.padding(24).presentationDetents([.medium]) }
+        .sheet(isPresented: $trim) {
+            NavigationStack {
+                Form {
+                    Section { Text("只分析这个范围，完整原录音仍会保留。") }
+                    Section("时间范围") {
+                        Stepper("起始 \(trimStart, specifier: "%.1f") 秒", value: $trimStart, in: 0...max(0, (project.tracks[trackIndex].recordingSeconds ?? 10) - 0.2), step: 0.1)
+                        Stepper("结束 \(trimEnd, specifier: "%.1f") 秒", value: $trimEnd, in: 0.2...max(0.2, project.tracks[trackIndex].recordingSeconds ?? 10), step: 0.1)
+                    }
+                    Button("分析片段") { if trimEnd > trimStart { trim = false; analyze(start: trimStart, end: trimEnd) } else { error = "结束时间需要大于开始时间。" } }
+                }.navigationTitle("截取清晰片段").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { trim = false } } }
+            }.presentationDetents([.medium, .large])
+        }
         .alert("录音提示", isPresented: Binding(get: { error != nil || audio.interruptionMessage != nil }, set: { if !$0 { error = nil; audio.interruptionMessage = nil } })) { Button("知道了", role: .cancel) { error = nil; audio.interruptionMessage = nil } } message: { Text(error ?? audio.interruptionMessage ?? "") }
     }
     private var statusText: String { switch audio.recordingState { case .ready: "首次录音会请求麦克风授权"; case .recording: "正在录音"; case .paused: "已暂停 · 原始录音保留"; case .finished: "录制已结束 · 原声保留" } }

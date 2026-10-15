@@ -9,29 +9,31 @@ import UniformTypeIdentifiers
         WindowGroup {
             RootView().environmentObject(store).environmentObject(audio)
                 .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)
-                .tint(Palette.gold)
+                .tint(Palette.accent)
         }
     }
 }
 
 enum Palette {
     static let gold = Color(red: 0.90, green: 0.77, blue: 0.43)
+    static let accent = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 0.90, green: 0.77, blue: 0.43, alpha: 1) : UIColor(red: 0.47, green: 0.34, blue: 0.06, alpha: 1)
+    })
     static let ink = Color(red: 0.13, green: 0.14, blue: 0.12)
     static let paper = Color(red: 0.93, green: 0.89, blue: 0.78)
-    static func background(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.065, green: 0.069, blue: 0.061) : Color(red: 0.965, green: 0.957, blue: 0.936) }
-    static func card(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(red: 0.105, green: 0.112, blue: 0.098) : Color(red: 1, green: 0.997, blue: 0.977) }
+    static func background(_ scheme: ColorScheme) -> Color { Color(uiColor: .systemGroupedBackground) }
+    static func card(_ scheme: ColorScheme) -> Color { Color(uiColor: .secondarySystemGroupedBackground) }
 }
 
-struct CardStyle: ViewModifier {
-    @Environment(\.colorScheme) var scheme
-    var radius: CGFloat = 20
-    func body(content: Content) -> some View { content.padding(18).background(Palette.card(scheme), in: RoundedRectangle(cornerRadius: radius)).overlay(RoundedRectangle(cornerRadius: radius).stroke(LinearGradient(colors: [.white.opacity(scheme == .dark ? 0.09 : 0.6), .primary.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.75)) }
+// Native grouping is reserved for music canvases and their inspectors.
+struct MusicGroupStyle: ViewModifier {
+    func body(content: Content) -> some View { GroupBox { content.frame(maxWidth: .infinity, alignment: .leading) } }
 }
-extension View { func musicCard(radius: CGFloat = 20) -> some View { modifier(CardStyle(radius: radius)) } }
+extension View { func musicCard(radius: CGFloat = 16) -> some View { modifier(MusicGroupStyle()) } }
 
 struct GoldButton: View {
     var title: String; var symbol: String = "plus"; var action: () -> Void
-    var body: some View { Button(action: action) { Label(title, systemImage: symbol).font(.subheadline.weight(.semibold)).frame(minHeight: 44).padding(.horizontal, 18).background(Palette.gold, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(Palette.ink) }.buttonStyle(MusicPressStyle()) }
+    var body: some View { Button(action: action) { Label(title, systemImage: symbol).frame(minHeight: 44) }.buttonStyle(.borderedProminent) }
 }
 struct ShareSheet: UIViewControllerRepresentable {
     var url: URL
@@ -39,7 +41,11 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 struct ShareItem: Identifiable { let id = UUID(); let url: URL }
-struct ProjectRoute: Identifiable { let id = UUID(); let project: MusicProject; var record = false }
+struct ProjectRoute: Identifiable, Hashable {
+    let id = UUID(); let project: MusicProject; var record = false
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
 
 struct RootView: View {
     @EnvironmentObject var store: ProjectStore
@@ -47,25 +53,33 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab = 0
     @State private var route: ProjectRoute?
+    @State private var communityRoute: ProjectRoute?
+    @State private var profileRoute: ProjectRoute?
     @State private var importer = false
     @State private var importing = false
     @State private var help = false
     var body: some View {
-        ZStack {
-            NavigationStack { CreationHome(onStart: create, onOpen: open, onImport: { importer = true }, onHelp: { help = true }) }.modifier(TabSurface(selected: tab == 0))
-            NavigationStack { CommunityView(onRemix: open) }.modifier(TabSurface(selected: tab == 1))
-            NavigationStack { MessagesView() }.modifier(TabSurface(selected: tab == 2))
-            NavigationStack { ProfileView(onOpen: open) }.modifier(TabSurface(selected: tab == 3))
+        TabView(selection: $tab) {
+            NavigationStack {
+                CreationHome(onStart: create, onOpen: open, onImport: { importer = true }, onHelp: { help = true })
+                    .navigationDestination(item: $route) { ProjectWorkspace(route: $0).toolbar(.hidden, for: .tabBar) }
+            }.tabItem { Label("创作", systemImage: "music.note") }.tag(0)
+            NavigationStack {
+                CommunityView(onRemix: { audio.stopPlayback(); communityRoute = ProjectRoute(project: $0) })
+                    .navigationDestination(item: $communityRoute) { ProjectWorkspace(route: $0).toolbar(.hidden, for: .tabBar) }
+            }.tabItem { Label("社区", systemImage: "person.2") }.tag(1)
+            NavigationStack { MessagesView() }.tabItem { Label("消息", systemImage: "bubble.left.and.bubble.right") }.tag(2)
+            NavigationStack {
+                ProfileView(onOpen: { audio.stopPlayback(); profileRoute = ProjectRoute(project: $0) })
+                    .navigationDestination(item: $profileRoute) { ProjectWorkspace(route: $0).toolbar(.hidden, for: .tabBar) }
+            }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(3)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { if route == nil { MusicTabBar(selection: $tab) } }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
-        .fullScreenCover(item: $route) { route in ProjectWorkspace(route: route) }
-
         .sheet(isPresented: $help) { HelpView() }
         .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .midi, .json, .data], allowsMultipleSelection: false) { result in
             switch result { case .success(let urls): if let url = urls.first { Task { await importMusic(url) } }; case .failure(let error): store.error = error.localizedDescription }
         }
-        .overlay { if importing { ZStack { Color.black.opacity(0.55).ignoresSafeArea(); ProgressView("正在导入文件…").padding(30).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)) } } }
+        .sheet(isPresented: $importing) { ProcessingView(stage: "正在导入文件…") }
         .alert("操作未完成", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button("知道了", role: .cancel) { store.error = nil } } message: { Text(store.error ?? "") }
         .onChange(of: scenePhase) { _, phase in if phase != .active { audio.handleInterruption("应用进入后台，录音已暂停并保留，请主动继续。") } }
     }
@@ -100,11 +114,37 @@ struct RootView: View {
 
 struct ProjectWorkspace: View {
     @EnvironmentObject private var store: ProjectStore
+    @Environment(\.dismiss) private var dismiss
     var route: ProjectRoute
     @State private var editing: MusicProject?
+    @State private var capturing = false
+    @State private var captureStarted = false
     init(route: ProjectRoute) { self.route = route; _editing = State(initialValue: route.record ? nil : route.project) }
     var body: some View {
-        if let project = editing { EditorView(project: project, store: store) }
-        else { RecordingView(project: route.project) { project in editing = project } }
+        Group {
+            if let project = editing { EditorView(project: project, store: store) }
+            else { ProgressView("准备录音…") }
+        }
+        .task { if editing == nil && !captureStarted { captureStarted = true; capturing = true } }
+        .fullScreenCover(isPresented: $capturing, onDismiss: { if editing == nil { dismiss() } }) {
+            RecordingView(project: route.project) { project in editing = project; capturing = false }
+        }
+    }
+}
+
+/// The system owns the modal, dimming, dismissal and accessibility containment.
+struct ProcessingView: View {
+    var stage: String
+    var cancelTitle = "取消分析，保留原录音"
+    var onCancel: (() -> Void)?
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                ProgressView().controlSize(.large)
+                Text(stage).multilineTextAlignment(.center).accessibilityAddTraits(.updatesFrequently)
+                if let onCancel { Button(cancelTitle, role: .cancel, action: onCancel).frame(minHeight: 44) }
+            }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle("正在处理").navigationBarTitleDisplayMode(.inline)
+        }.presentationDetents([.medium]).interactiveDismissDisabled()
     }
 }

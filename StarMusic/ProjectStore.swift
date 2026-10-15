@@ -4,6 +4,7 @@ import Combine
 @MainActor final class ProjectStore: ObservableObject {
     @Published private(set) var projects: [MusicProject] = []
     @Published var error: String?
+    private(set) var unsavedProjects: [UUID: MusicProject] = [:]
     let root: URL
     var recordingDirectory: URL { root.appendingPathComponent("Recordings", isDirectory: true) }
     var projectDirectory: URL { root.appendingPathComponent("Projects", isDirectory: true) }
@@ -34,7 +35,9 @@ import Combine
     func save(_ project: MusicProject) throws {
         try project.validate()
         let data = try encoder.encode(project)
-        try data.write(to: projectDirectory.appendingPathComponent(project.id.uuidString + ".json"), options: .atomic)
+        do { try data.write(to: projectDirectory.appendingPathComponent(project.id.uuidString + ".json"), options: .atomic) }
+        catch { unsavedProjects[project.id] = project; throw error }
+        unsavedProjects.removeValue(forKey: project.id)
         if let i = projects.firstIndex(where: { $0.id == project.id }) { projects[i] = project } else { projects.append(project) }
         projects.sort { $0.updated > $1.updated }
     }
@@ -65,7 +68,8 @@ import Combine
         let file = track?.recordingFile ?? ((trackID == nil || trackID == p.tracks.first?.id) ? p.recordingFile : nil)
         return file.map { recordingDirectory.appendingPathComponent($0) }
     }
-    func package(_ p: MusicProject) throws -> URL {
+    func package(_ snapshot: MusicProject) throws -> URL {
+        let p = unsavedProjects[snapshot.id] ?? snapshot
         try p.validate()
         var originals: [String: Data] = [:], total = 0
         let files = Set(p.tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } } + [p.recordingFile].compactMap { $0 })
@@ -113,7 +117,10 @@ import Combine
     @Published private(set) var undoHistory: [MusicProject] = []
     @Published private(set) var redoHistory: [MusicProject] = []
     let store: ProjectStore
-    init(_ project: MusicProject, store: ProjectStore) { self.project = project; self.store = store }
+    init(_ project: MusicProject, store: ProjectStore) {
+        self.project = store.unsavedProjects[project.id] ?? project; self.store = store
+        if store.unsavedProjects[project.id] != nil { saveStatus = "保存失败 · 请重试或导出" }
+    }
     func edit(_ operation: (inout MusicProject) -> Void) {
         undoHistory.append(project); if undoHistory.count > 256 { undoHistory.removeFirst() }; redoHistory = []
         operation(&project); project.updated = Date(); persist()

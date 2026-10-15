@@ -109,8 +109,8 @@ struct KeyShiftSheet: View {
     private var description: String { steps == 0 ? "原来的高度" : steps > 0 ? "比原来高 \(steps) 点" : "比原来低 \(-steps) 点" }
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+            Form {
+                Section {
                     Text("找到更舒服的高度。").font(.title2.weight(.medium))
                     Text("整首旋律一起升高或降低，前后顺序和节奏保持不变。原始录音保留，试听使用乐器演奏。").font(.subheadline).foregroundStyle(.secondary)
                     if project.tracks.contains(where: { $0.useOriginalAudio == true && !$0.muted && $0.notes.allSatisfy({ $0.midi == nil }) }) { Text("有一部分只有录音，还没有整理成旋律。这部分保持原来的高度。").font(.caption).foregroundStyle(.secondary) }
@@ -123,9 +123,9 @@ struct KeyShiftSheet: View {
                     Button(previewing ? "正在准备试听…" : "先听听") { Task { await preview() } }.frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.bordered).disabled(previewing).accessibilityIdentifier("key.preview")
                     GoldButton(title: "用这个调", symbol: "checkmark") { apply() }.accessibilityIdentifier("key.apply")
                     if let error { Text(error).font(.caption).foregroundStyle(.secondary) }
-                }.padding(24)
+                }
             }.navigationTitle("换个调").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("取消") { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { dismiss() } } }
         }.onDisappear { audio.stopPlayback() }
     }
     private func apply() {

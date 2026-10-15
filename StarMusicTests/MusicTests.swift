@@ -61,6 +61,33 @@ final class MusicTests: XCTestCase {
         store.update(p) { $0.deleted = false }
         XCTAssertFalse(try XCTUnwrap(store.projects.first { $0.id == p.id }).deleted)
     }
+    @MainActor func testFailedSaveSurvivesNativeNavigationAndEmergencyExport() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root), original = MusicProject()
+        try store.save(original)
+        let backup = root.appendingPathComponent("SavedProjects")
+        try FileManager.default.moveItem(at: store.projectDirectory, to: backup)
+        try Data("block writes".utf8).write(to: store.projectDirectory)
+        var session: EditorSession? = EditorSession(original, store: store)
+        session?.addNote(midi: 72, start: 1)
+        XCTAssertTrue(session?.saveStatus.contains("失败") == true)
+        session = nil // A normal system pop releases the editor.
+        let reopened = EditorSession(original, store: store)
+        XCTAssertEqual(reopened.track.notes.first?.midi, 72)
+        XCTAssertTrue(reopened.saveStatus.contains("失败"))
+        let package = try store.package(original)
+        defer { try? FileManager.default.removeItem(at: package) }
+        let exported = try JSONDecoder().decode(ProjectPackage.self, from: Data(contentsOf: package))
+        XCTAssertEqual(exported.project.tracks[0].notes.first?.midi, 72)
+        let old = try JSONDecoder().decode(MusicProject.self, from: Data(contentsOf: backup.appendingPathComponent(original.id.uuidString + ".json")))
+        XCTAssertTrue(old.tracks[0].notes.isEmpty, "Failure must never claim a disk save.")
+        try FileManager.default.removeItem(at: store.projectDirectory)
+        try FileManager.default.moveItem(at: backup, to: store.projectDirectory)
+        XCTAssertTrue(reopened.persist())
+        XCTAssertNil(store.unsavedProjects[original.id])
+        XCTAssertEqual(ProjectStore(root: root).projects.first { $0.id == original.id }?.tracks[0].notes.first?.midi, 72)
+    }
     @MainActor func testProjectPackageRetainsOriginalRecording() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

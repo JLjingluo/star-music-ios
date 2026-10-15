@@ -30,7 +30,8 @@ jobs:
           done
       - name: Select Xcode and generate project
         run: |
-          if [ -d /Applications/Xcode_16.4.app ]; then sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer; fi
+          test -d /Applications/Xcode_26.2.app
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
           xcodegen generate
       - name: Archive and export signed IPA

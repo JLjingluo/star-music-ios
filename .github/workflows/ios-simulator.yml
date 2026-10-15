@@ -17,9 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: |
-          if [ -d /Applications/Xcode_16.4.app ]; then
-            sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
-          fi
+          test -d /Applications/Xcode_26.2.app
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
       - name: Prepare real humming evaluation samples
         run: |
@@ -32,7 +31,7 @@ jobs:
           xcodegen generate
       - name: Run music, storage and interface tests
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; groups=json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime,devices in groups.items() if runtime.endswith("iOS-26-2") for d in devices if d.get("isAvailable") and d["name"] == "iPhone 17 Pro"))')
           printf 'SIMULATOR_ID=%s\n' "$DEVICE_ID" >> "$GITHUB_ENV"
           xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- -parallel-testing-enabled NO
       - name: Export interface screenshots
