@@ -58,6 +58,7 @@ import UniformTypeIdentifiers
         .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
         .sheet(isPresented: $processing) { ProcessingView(stage: stage, onCancel: analysis == nil ? nil : { analysis?.cancel(); analysis = nil; processing = false }) }
         .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
+        .onChange(of: rawMode) { _, _ in addMode = false; expandedTools = false }
         .onDisappear { audio.stopPlayback(); analysis?.cancel(); session.persist() }
     }
     private var editorContent: some View {

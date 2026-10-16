@@ -11,7 +11,11 @@ final class InteractionTests: XCTestCase {
         for title in ["创作", "社区", "消息", "我的"] { XCTAssertTrue(app.tabBars.buttons[title].exists) }
         return app
     }
-    private func capture(_ name: String) { let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
+    private func capture(_ name: String) {
+        // Allow the OS-owned glass/menu transition to finish before recording a static preview.
+        Thread.sleep(forTimeInterval: 0.5)
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
     private func back(_ app: XCUIApplication) { app.navigationBars.buttons.element(boundBy: 0).tap() }
     private func blank(_ app: XCUIApplication) {
         app.buttons["home.start"].tap(); XCTAssertTrue(app.buttons["start.blank"].waitForExistence(timeout: 5)); app.buttons["start.blank"].tap()
