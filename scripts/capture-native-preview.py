@@ -19,9 +19,17 @@ if launch is not None:launch.set('buildConfiguration','Release')
 tree.write(source.with_name('StarMusicPreview.xcscheme'),encoding='UTF-8',xml_declaration=True)
 command=['xcodebuild','test','-project','StarMusic.xcodeproj','-scheme','StarMusicPreview','-configuration','Release','-destination','platform=iOS Simulator,id='+os.environ['SIMULATOR_ID'],'-derivedDataPath','build/simulator','-resultBundlePath','build/ReleasePreview.xcresult','-only-testing:StarMusicUITests/InteractionTests/testCreationSheetOpensEditorAndHidesNavigation','-only-testing:StarMusicUITests/InteractionTests/testLightAppearanceAndNativeSettingsToggle','CODE_SIGNING_ALLOWED=YES','CODE_SIGN_IDENTITY=-','-parallel-testing-enabled','NO']
 # XCTest manages boot/install/launch; avoid the standalone simctl service failures on this image.
-subprocess.run(command,check=True,timeout=1200)
 captures=out/'release-ui'
-subprocess.run(['xcrun','xcresulttool','export','attachments','--path','build/ReleasePreview.xcresult','--output-path',str(captures)],check=True,timeout=90)
+try:
+    result=subprocess.run(command,check=False,timeout=1200)
+finally:
+    if Path('build/ReleasePreview.xcresult').exists():
+        subprocess.run(['xcrun','xcresulttool','export','attachments','--path','build/ReleasePreview.xcresult','--output-path',str(captures)],check=True,timeout=90)
+        for file in captures.iterdir():
+            if file.is_file():
+                target=out/'ui';target.mkdir(exist_ok=True)
+                if file.suffix!='.mp4':shutil.copy2(file,target/('Release-'+file.name))
+result.check_returncode()
 manifest=json.loads((captures/'manifest.json').read_text())
 found=set();video=None
 for group in manifest:
@@ -38,7 +46,4 @@ assert found=={'dark','light'},'Actual Release appearance captures missing'
 assert video is not None and video.stat().st_size>10000,'XCTest did not preserve an actual native screen recording'
 # The unmodified recording includes the process launch and native creation/navigation flow.
 shutil.copy2(video,out/'StarMusic-Entrance.mp4')
-for file in captures.iterdir():
-    if file.is_file() and file.suffix in ('.png','.json'):
-        target=out/'ui';target.mkdir(exist_ok=True);shutil.copy2(file,target/('Release-'+file.name))
 print('Actual Release UI smoke tests, dark/light screenshots and native launch/creation recording verified.',flush=True)

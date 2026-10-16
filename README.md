@@ -4,6 +4,8 @@
 
 ## 本轮实现
 
+界面在 iOS 26 使用系统玻璃按钮与操作分组；音乐画布为 24–28pt 连续圆角。主页只保留创作和最近草稿，低频工具收进系统菜单；音符校正按需打开系统面板，普通模式默认收起混音，简洁模式进一步减少常驻控件。
+
 - 简洁、普通、专业模式共用工程和撤销历史，改变工具密度；专业模式开放识谱引擎和逐轨原声裁剪、时间偏移等控制。
 - 随 App 安装完整 CREPE Core ML 模型（22,244,328 参数，FLOAT16），不下载模型即可识谱；独立 YIN 分析加入谐波校正、插值、颤音稳定和静音分段。目标仍是清晰单声部，复杂歌曲不保证准确。
 - 录唱、音频导入与重新分析统一经过 RecognitionService 和高质量重采样。失败或取消保留原声；重新分析确认后才替换所选轨音符，可撤销。
@@ -20,7 +22,9 @@
 
 本轮代码附带模型推理、YIN 谐波/颤音分段、重采样、云端请求与失败处理、多轨原声复制/项目包迁移、共享音频时间线、撤销以及原生 UI 流程测试。必须以当前提交的 GitHub Actions 结果为准；源码语法检查不代表 Xcode 编译通过。
 
-v0.5.0 build 6 已实际通过 macOS 15 / Xcode 16.4 编译、27 项 XCTest 与 5 项原生界面测试，Release 模拟器和 arm64 iPhoneOS 构建均成功。已下载核验原始 IPA、完整编译模型、无签名状态及校验值，并检查启动过渡、深浅色首页、三种模式和换调页。详见 [本轮原生验证记录](NATIVE-VERIFICATION-v0.5.md)，[v0.4 历史记录](NATIVE-VERIFICATION.md) 保留此前模型设置与 Keychain 验证。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
+v0.6.0 build 8 的 App 源码 `b4cd394` 已在 macOS 15 / Xcode 26.2 / iOS 26.2 实际通过 **43 项单元测试与 9 条原生界面流程**。测试覆盖审查修复、完整模型推理、Keychain、原生侧滑返回、单一底栏、三种模式、换调、逐轨工具及音符校正面板。后续预览捕获恢复只更改构建脚本和文档，工作流会核验 App / 模型 / 测试 / 工程输入完全一致后复用测试证据；不会把源码语法检查当作 Xcode 测试。
+
+[本轮原生验证记录](NATIVE-VERIFICATION-v0.6.md) 记录通过的测试及最终打包状态；[原生界面重构说明](NATIVE-REFACTOR-v0.6.md) 包含页面审计、组件替换及 SwiftUI 实现；[35 项审查修复记录](AUDIT-FIXES-v0.6.md) 逐项说明实现与验证边界。历史验证见 [v0.5](NATIVE-VERIFICATION-v0.5.md) / [v0.4](NATIVE-VERIFICATION.md)。没有用户自配服务密钥时，云端仅验证模拟 HTTP 契约；真实麦克风、耳机切换和来电仍需 iPhone 验证。
 
 公开仓库：https://github.com/JLjingluo/star-music-ios 。Direct IPA Download 工作流在成功构建后直接发布 `.ipa`，没有额外 ZIP 包装。未签名包需有效 Apple 签名才能安装。
 
@@ -97,11 +101,13 @@ base64 -i StarMusic.mobileprovision | tr -d '\n' | pbcopy
 
 ## 本轮 IPA 直链
 
-[直接下载 v0.5.0 build 6 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.5.0-unsigned-build-38657962915/StarMusic-Unsigned.ipa)（42,356,591 字节，无额外 ZIP）。
+[直接下载 v0.6.0 build 8 原始 IPA](https://github.com/JLjingluo/star-music-ios/releases/download/ios-v0.6.0-unsigned-build-38908242325/StarMusic-Unsigned.ipa)（42,325,372 字节，无额外 ZIP）。
+
+完整测试 43 项单元 + 9 条 UI 流程通过；相同 App 源码核验后的成功构建另外通过 2 条 Release UI 流程，以及 Release 模拟器和 arm64 iPhoneOS 编译。实际 IPA 的模型、平台、无签名状态和 SHA-256 均已下载核验；原始录屏包含模拟器等待，不作为真机启动速度证据。见 [v0.6 验证记录](NATIVE-VERIFICATION-v0.6.md)。
 
 未签名；安装前需要有效的 Apple 签名。仓库公开，IPA 已实际通过匿名下载检查。
 
-## v0.5 已验证的改进
+## v0.5 识谱与换调基础（本轮保留）
 
 - 简洁模式收起次要工具；普通模式使用高低旋律图、直白说明和「换个调」。BPM、调号与五线谱留给专业模式。
 - 整首升降调先试听再应用，保持相对音程、顺序与节奏；原始录音保留，可撤销，越界时拒绝处理而不是截断音符。
