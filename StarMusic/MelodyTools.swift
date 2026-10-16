@@ -46,10 +46,10 @@ struct MelodyCanvas: View {
     }
     private var plot: some View {
         ZStack(alignment: .topLeading) {
-            grid
-            if notes.isEmpty { Text(addMode ? "轻点这里，写下一个声音" : "录唱后，旋律会出现在这里").font(.caption).foregroundStyle(.secondary).frame(width: 290, height: 160) }
+            grid.contentShape(Rectangle()).onTapGesture { point in addAt(point) }.allowsHitTesting(addMode)
+            if notes.isEmpty { Text(addMode ? "轻点这里，写下一个声音" : "录唱后，旋律会出现在这里").font(.caption).foregroundStyle(.secondary).frame(width: 290, height: 160).allowsHitTesting(false) }
             ForEach(notes.filter { $0.midi != nil }) { note in noteCell(note) }
-        }.frame(width: width, height: 170).contentShape(Rectangle()).onTapGesture { point in addAt(point) }
+        }.frame(width: width, height: 170)
     }
     private var grid: some View {
         Canvas { context, size in
@@ -74,12 +74,14 @@ struct MelodyCanvas: View {
             Capsule().fill(color).frame(width: frame.width, height: 12)
                 .overlay(Capsule().stroke(border, style: StrokeStyle(lineWidth: 1, dash: [3])))
                 .frame(width: max(44, frame.width), height: 44)
-        }.buttonStyle(.plain).position(x: frame.midX, y: frame.midY)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
             .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑").accessibilitySortPriority(-note.start)
             .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in
                 let steps = Int((-Double(value.translation.height) / 140 * Double(high - low)).rounded())
                 onMove(note.id, steps)
             })
+            .position(x: frame.midX, y: frame.midY)
     }
     private func addAt(_ point: CGPoint) {
         guard addMode, !notes.contains(where: { $0.midi != nil && noteFrame($0).insetBy(dx: -max(0, (44 - noteFrame($0).width) / 2), dy: 0).contains(point) }) else { return }
