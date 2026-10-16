@@ -4,8 +4,15 @@ on:
     branches: [main]
     paths: ['StarMusic/**', 'StarMusicTests/**', 'StarMusicUITests/**', 'project.yml', 'scripts/**', '.github/workflows/ios-simulator.yml']
   workflow_dispatch:
+    inputs:
+      verified_test_run_id:
+        description: 'Optional: reuse a passing native XCTest step only when all app/test/project sources are unchanged'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: simulator-${{ github.ref }}
   cancel-in-progress: true
@@ -15,12 +22,21 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Select Xcode
         run: |
           test -d /Applications/Xcode_26.2.app
           sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
+      - name: Verify unchanged application and passing native test evidence
+        if: inputs.verified_test_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_TEST_RUN_ID: ${{ inputs.verified_test_run_id }}
+        run: python3 scripts/verify-native-test-run.py
       - name: Prepare real humming evaluation samples
+        if: inputs.verified_test_run_id == ''
         run: |
           python3 -m venv "$RUNNER_TEMP/humming-benchmark-env"
           "$RUNNER_TEMP/humming-benchmark-env/bin/pip" install remotezip==0.12.3
@@ -29,14 +45,25 @@ jobs:
         run: |
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
           xcodegen generate
+      - name: Select native simulator
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; groups=json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime,devices in groups.items() if runtime.endswith("iOS-26-2") for d in devices if d.get("isAvailable") and d["name"] == "iPhone 17 Pro"))')
+          printf 'SIMULATOR_ID=%s\n' "$DEVICE_ID" >> "$GITHUB_ENV"
       - name: Run music, storage and interface tests
+        if: inputs.verified_test_run_id == ''
         env:
           REQUIRE_HUMMING_BENCHMARK: '1'
           TEST_RUNNER_REQUIRE_HUMMING_BENCHMARK: '1'
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; groups=json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime,devices in groups.items() if runtime.endswith("iOS-26-2") for d in devices if d.get("isAvailable") and d["name"] == "iPhone 17 Pro"))')
-          printf 'SIMULATOR_ID=%s\n' "$DEVICE_ID" >> "$GITHUB_ENV"
-          xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- -parallel-testing-enabled NO
+          xcodebuild test -project StarMusic.xcodeproj -scheme StarMusic -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/test -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- -parallel-testing-enabled NO
+      - name: Restore verified native test bundle
+        if: inputs.verified_test_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: StarMusic-TestResults
+          path: build/TestResults.xcresult
+          run-id: ${{ inputs.verified_test_run_id }}
+          github-token: ${{ github.token }}
       - name: Export interface screenshots
         if: always()
         run: |
@@ -44,14 +71,15 @@ jobs:
           if [ -d build/TestResults.xcresult ]; then
             xcrun xcresulttool export attachments --path build/TestResults.xcresult --output-path artifacts/ui
           fi
+          if [ -f artifacts/Native-Test-Provenance.json ]; then
+            cp artifacts/Native-Test-Provenance.json artifacts/ui/
+          fi
       - name: Build simulator app
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
           mkdir -p artifacts
           ditto -c -k --sequesterRsrc --keepParent build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app artifacts/StarMusic-Simulator.zip
           cp README.md artifacts/README.md
-      - name: Capture native app preview
-        run: python3 scripts/capture-native-preview.py
       - name: Build unsigned device IPA
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
@@ -66,6 +94,8 @@ jobs:
           path: artifacts/StarMusic-Unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+      - name: Capture native app preview
+        run: python3 scripts/capture-native-preview.py
       - name: Upload simulator package
         uses: actions/upload-artifact@v4
         with:
@@ -78,7 +108,7 @@ jobs:
             artifacts/README.md
           retention-days: 14
       - name: Upload test results
-        if: always()
+        if: always() && inputs.verified_test_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: StarMusic-TestResults
