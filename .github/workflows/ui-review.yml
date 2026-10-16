@@ -31,9 +31,12 @@ jobs:
           if [ -d results/TestResults.xcresult ]; then RESULT_PATH=results/TestResults.xcresult; fi
           if [ "$RESULT_PATH" = results ]; then mv results TestResults.xcresult; RESULT_PATH=TestResults.xcresult; fi
           xcrun xcresulttool export attachments --path "$RESULT_PATH" --output-path ui
+          # Keep the complete generated evidence outside the Actions storage quota.
+          # This also permits safe removal of a duplicate failed-run artifact later.
+          ditto -c -k --keepParent "$RESULT_PATH" ui/Native-TestResults.zip
           SOURCE_SHA=$(gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID" --jq .head_sha)
           shopt -s nullglob
-          UI_ASSETS=(ui/*.png ui/*.json ui/*.txt ui/*.mp4)
+          UI_ASSETS=(ui/*.png ui/*.json ui/*.txt ui/*.mp4 ui/Native-TestResults.zip)
           if gh release view "diagnostic-ui-$SOURCE_RUN_ID" >/dev/null 2>&1; then
             gh release upload "diagnostic-ui-$SOURCE_RUN_ID" "${UI_ASSETS[@]}" --clobber
           else
