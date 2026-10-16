@@ -19,7 +19,10 @@ def capture():
     # The actual video still records a subsequent process launch and real system transition.
     run('shutdown',sim,timeout=30,check=False)
     run('boot',sim,timeout=30)
+    developer=Path(subprocess.check_output(['xcode-select','-p'],text=True).strip())
+    subprocess.run(['open','-a',str(developer/'Applications/Simulator.app'),'--args','-CurrentDeviceUDID',sim],check=True,timeout=30)
     run('bootstatus',sim,'-b',timeout=120)
+    run('io',sim,'screenshot',str(out/'Simulator-Ready.png'),timeout=45)
     run('install',sim,'build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app',timeout=90)
     run('status_bar',sim,'override','--time','9:41','--dataNetwork','wifi','--wifiMode','active','--wifiBars','3','--batteryState','charged','--batteryLevel','100',timeout=30)
     run('launch',sim,'music.star.starmusic','-appearance','dark',timeout=90)
@@ -44,6 +47,8 @@ for attempt in range(2):
         capture();break
     except (subprocess.SubprocessError,RuntimeError) as error:
         print('Native capture attempt failed:',attempt+1,str(error),flush=True)
+        try:run('io',sim,'screenshot',str(out/f'StarMusic-Capture-Failure-{attempt+1}.png'),timeout=30)
+        except subprocess.SubprocessError as diagnostic:print('Failure screenshot unavailable:',str(diagnostic),flush=True)
         if attempt==1:raise
         run('shutdown',sim,timeout=30,check=False)
 print('Actual native dark/light and process-launch captures completed.',flush=True)

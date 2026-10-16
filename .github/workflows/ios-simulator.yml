@@ -97,12 +97,15 @@ jobs:
       - name: Capture native app preview
         run: python3 scripts/capture-native-preview.py
       - name: Upload simulator package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: StarMusic-Simulator
           path: |
             artifacts/StarMusic-Simulator.zip
             artifacts/StarMusic-Home*.png
+            artifacts/StarMusic-Capture-Failure*.png
+            artifacts/Simulator-Ready.png
             artifacts/StarMusic-Entrance.mp4
             artifacts/ui
             artifacts/README.md
