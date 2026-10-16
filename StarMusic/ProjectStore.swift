@@ -49,6 +49,7 @@ import AVFoundation
     }
     func duplicate(_ snapshot: MusicProject) throws {
         let p = (unsavedProjects[snapshot.id] ?? snapshot).migratingLegacyRecording()
+        try p.validate()
         var copy = p; copy.id = UUID(); copy.name = MusicProject.projectName(p.name, suffix: " · 副本"); copy.sample = false; copy.updated = Date(); copy.created = Date()
         copy.tracks = copy.tracks.map { track in
             var t = track; t.id = UUID(); t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; return t
@@ -81,7 +82,7 @@ import AVFoundation
     }
     private func restoreRecordingDuration(_ project: inout MusicProject) {
         for i in project.tracks.indices where project.tracks[i].recordingSeconds == nil {
-            if let name = project.tracks[i].recordingFile, let file = try? AVAudioFile(forReading: recordingDirectory.appendingPathComponent(name)), file.processingFormat.sampleRate > 0 {
+            if let name = project.tracks[i].recordingFile, MusicProject.validRecordingName(name), let file = try? AVAudioFile(forReading: recordingDirectory.appendingPathComponent(name)), file.processingFormat.sampleRate > 0 {
                 project.tracks[i].recordingSeconds = Double(file.length) / file.processingFormat.sampleRate
             }
         }
