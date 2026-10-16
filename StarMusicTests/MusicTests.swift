@@ -517,7 +517,7 @@ final class AuditRegressionTests: XCTestCase {
         XCTAssertLessThanOrEqual(clipped.samples.count, 4_800_000)
         XCTAssertGreaterThan(clipped.samples.count, 4_799_900)
     }
-    func testCancelledRenderJobsExitAndDoNotBlockNextRender() async throws {
+    @MainActor func testCancelledRenderJobsExitAndDoNotBlockNextRender() async throws {
         var p = MusicProject(); p.bpm = 30; p.tracks[0].notes = [MusicNote(midi: 60, start: 0, duration: 299)]
         let jobs = (0..<4).map { _ in Task { try await AudioRenderer.render(p) } }
         for job in jobs { job.cancel() }
@@ -525,6 +525,18 @@ final class AuditRegressionTests: XCTestCase {
         let short = try AudioController.previewProject(.piano, midi: 127)
         let rendered = try await AudioRenderer.render(short)
         XCTAssertEqual(String(decoding: rendered.prefix(4), as: UTF8.self), "RIFF")
+        // Exercise Stop during a real, expensive render, not just a pre-cancelled queue item.
+        p.tracks[0].instrument = .synth
+        let controller = AudioController()
+        let playback = Task { try await controller.play(p) }
+        for _ in 0..<1000 { if controller.renderingID != nil { break }; await Task.yield() }
+        XCTAssertNotNil(controller.renderingID)
+        try await Task.sleep(for: .milliseconds(30))
+        controller.stopPlayback()
+        let stopped = expectation(description: "Stop cancels an active render promptly")
+        Task { _ = try? await playback.value; stopped.fulfill() }
+        await fulfillment(of: [stopped], timeout: 3)
+        XCTAssertNil(controller.renderingID); XCTAssertNil(controller.playingID)
     }
     @MainActor func testPlaybackReallyPausesResumesAndPreviewDoesNotInheritLoop() async throws {
         let controller = AudioController(), p = try AudioController.previewProject(.piano, midi: 69)
