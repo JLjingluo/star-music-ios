@@ -63,7 +63,7 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "BPM")).firstMatch.exists)
         app.buttons["editor.addNote"].tap(); app.otherElements["editor.melody"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
-        if !app.buttons["editor.keyShift"].isHittable { app.swipeUp() }
+        app.swipeUp() // Reveal the complete button above the native bottom toolbar.
         app.buttons["editor.keyShift"].tap(); XCTAssertTrue(app.buttons["key.higher"].waitForExistence(timeout: 5)); app.buttons["key.higher"].tap()
         XCTAssertTrue(app.staticTexts["比原来高 1 点"].exists); capture("Key-Shift-Plain")
         app.buttons["key.preview"].tap(); app.buttons["key.apply"].tap(); XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))

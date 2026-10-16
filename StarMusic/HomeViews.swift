@@ -24,7 +24,7 @@ struct CreationHome: View {
                     }
                     Button { pendingChoice = nil; chooser = true } label: {
                         Label("开始创作", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
-                    }.buttonStyle(.borderedProminent).accessibilityIdentifier("home.start")
+                    }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent).accessibilityIdentifier("home.start")
                 }.padding(.vertical, 8)
                 Button(action: onImport) { Label("导入音乐", systemImage: "square.and.arrow.down") }
                     .accessibilityIdentifier("home.import")
@@ -114,7 +114,7 @@ struct DraftRow: View {
                         Text(project.updated, style: .relative).font(.caption2).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(minHeight: 54)
-            }.disabled(project.deleted).buttonStyle(.borderless)
+            }.disabled(project.deleted).buttonStyle(.plain)
             HStack(spacing: 0) {
                 if project.deleted { Button("恢复") { store.update(project) { $0.deleted = false } }.frame(minHeight: 44) }
                 else {

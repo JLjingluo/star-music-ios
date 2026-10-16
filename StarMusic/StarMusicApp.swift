@@ -25,6 +25,9 @@ enum Palette {
     static let accent = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark ? UIColor(red: 0.90, green: 0.77, blue: 0.43, alpha: 1) : UIColor(red: 0.47, green: 0.34, blue: 0.06, alpha: 1)
     })
+    static let onAccent = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 0.13, green: 0.14, blue: 0.12, alpha: 1) : .white
+    })
     static let ink = Color(red: 0.13, green: 0.14, blue: 0.12)
     static let paper = Color(red: 0.93, green: 0.89, blue: 0.78)
     static func background(_ scheme: ColorScheme) -> Color { Color(uiColor: .systemGroupedBackground) }
@@ -39,7 +42,7 @@ extension View { func musicCard(radius: CGFloat = 16) -> some View { modifier(Mu
 
 struct GoldButton: View {
     var title: String; var symbol: String = "plus"; var action: () -> Void
-    var body: some View { Button(action: action) { Label(title, systemImage: symbol).frame(minHeight: 44) }.buttonStyle(.borderedProminent) }
+    var body: some View { Button(action: action) { Label(title, systemImage: symbol).frame(minHeight: 44) }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent) }
 }
 struct ShareSheet: UIViewControllerRepresentable {
     var url: URL

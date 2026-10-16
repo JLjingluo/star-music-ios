@@ -7,7 +7,9 @@ enum MusicEdits {
     static func attachOriginal(_ track: inout MusicTrack, file: String, duration: Double) {
         if let old = track.recordingFile {
             for i in track.notes.indices where track.notes[i].sourceFile == nil { track.notes[i].sourceFile = old }
-            track.sourceHistory = Array(Set((track.sourceHistory ?? []) + [old])).sorted()
+            var history = track.sourceHistory ?? []
+            if !history.contains(old) { history.append(old) }
+            track.sourceHistory = history
         }
         track.recordingFile = file; track.recordingSeconds = duration; track.trimStart = nil; track.trimEnd = nil; track.useOriginalAudio = true
     }

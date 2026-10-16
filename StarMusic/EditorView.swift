@@ -172,7 +172,7 @@ import UniformTypeIdentifiers
     private var playbackBar: some View {
         HStack(spacing: 20) {
             Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 44, height: 44) }.accessibilityLabel("回到起点")
-            Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderedProminent).accessibilityLabel("播放或暂停")
+            Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent).accessibilityLabel("播放或暂停")
             Text(professional ? "第 \(min(session.project.bars, Int(audio.playbackSeconds * session.project.bpm / 240) + 1)) / \(session.project.bars) 小节" : musicTime(audio.playbackSeconds) + " / " + musicTime(session.project.seconds)).font(.caption).foregroundStyle(.secondary)
             Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
         }.frame(maxWidth: .infinity)
