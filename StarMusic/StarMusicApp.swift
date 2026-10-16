@@ -36,13 +36,39 @@ enum Palette {
 
 // Native grouping is reserved for music canvases and their inspectors.
 struct MusicGroupStyle: ViewModifier {
-    func body(content: Content) -> some View { GroupBox { content.frame(maxWidth: .infinity, alignment: .leading) } }
+    var radius: CGFloat
+    func body(content: Content) -> some View {
+        content.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
 }
-extension View { func musicCard(radius: CGFloat = 16) -> some View { modifier(MusicGroupStyle()) } }
+struct MusicActionStyle: ViewModifier {
+    var prominent = false
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent { content.buttonStyle(.glassProminent).foregroundStyle(Palette.onAccent) }
+            else { content.buttonStyle(.glass) }
+        } else {
+            if prominent { content.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent) }
+            else { content.buttonStyle(.bordered) }
+        }
+    }
+}
+struct MusicGlassGroup<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    @ViewBuilder var body: some View {
+        if #available(iOS 26.0, *) { GlassEffectContainer(spacing: 12, content: content) }
+        else { content() }
+    }
+}
+extension View {
+    func musicCard(radius: CGFloat = 24) -> some View { modifier(MusicGroupStyle(radius: radius)) }
+    func musicAction(prominent: Bool = false) -> some View { modifier(MusicActionStyle(prominent: prominent)) }
+}
 
 struct GoldButton: View {
     var title: String; var symbol: String = "plus"; var action: () -> Void
-    var body: some View { Button(action: action) { Label(title, systemImage: symbol).frame(minHeight: 44) }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent) }
+    var body: some View { Button(action: action) { Label(title, systemImage: symbol).frame(minHeight: 44) }.musicAction(prominent: true) }
 }
 struct ShareSheet: UIViewControllerRepresentable {
     var url: URL

@@ -28,3 +28,9 @@ Build with Xcode 26.2 and run iOS 26.2 simulator previews to obtain the real sys
 Navigation push/pop, sheet motion and selection feedback belong to the OS. No root cascade or custom tab indicator remains. Failure to write a project retains its latest valid state in ProjectStore memory across a native pop and supports emergency package export and later retry; it is never marked saved until the disk write succeeds. Tests must verify this failure path as well as native tabs, native search, real switches, per-tab history, edge-swipe and modal cancellation.
 
 Page/component audit, replacement reasons, source changes and official Apple references are recorded in NATIVE-REFACTOR-v0.6.md. Native UI screenshots are required before delivery; source parsing is insufficient.
+
+## Build 8 · Reduced density and native glass actions
+
+The latest user review asks for clearer rounded forms and more thorough simplification. Home keeps a single creation group and recent drafts; secondary tools move to the system toolbar menu. Music content surfaces use real 24–28 pt continuous corners on semantic secondary backgrounds. Unlike ordinary settings and lists, the pitch canvas and track workspace require their own content grouping. They do not use glass behind notes.
+
+On iOS 26, transport, key shift, instrument and track actions use GlassButtonStyle / GlassProminentButtonStyle grouped by GlassEffectContainer. iOS 17–25 use standard bordered controls. The SDK renders materials and accessibility behavior; there is no blur imitation. Selected-note controls open in a system sheet instead of expanding the editor. Mixing is disclosed on demand in ordinary mode. All low-frequency tools stay reachable through explicit Menu controls, including coordinate-free note creation. The native bottom toolbar keeps undo, redo and a labelled share icon. No custom navigation or decorative entrance is reintroduced.

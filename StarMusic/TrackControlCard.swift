@@ -21,11 +21,12 @@ struct TrackControlCard: View {
     @State private var volume = 0.7
     @State private var confirmDelete = false
     @State private var movementError: String?
+    @State private var mixExpanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Button(action: onEdit) {
-                    VStack(alignment: .leading, spacing: 5) { Text(track.name).font(.headline); Text(track.instrument.name + " · \(track.notes.filter { $0.midi != nil }.count) 个音符").font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading, spacing: 5) { Text(track.name).font(.headline); Text(track.instrument.name).font(.caption).foregroundStyle(.secondary) }
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }.buttonStyle(.plain).accessibilityLabel("编辑 \(track.name) 的音符")
                 Menu {
@@ -41,30 +42,36 @@ struct TrackControlCard: View {
                     Button("删除音轨", role: .destructive) { confirmDelete = true }.disabled(!canDelete)
                 } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("\(track.name) 更多操作")
             }
-            if !simple { VStack(spacing: 8) {
-                Toggle(professional ? "静音" : "暂时不播放", isOn: Binding(get: { track.muted }, set: { value in change { $0.muted = value } })).font(.caption)
-                Toggle(professional ? "独奏" : "只听这个声音", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } })).font(.caption)
+            if !simple {
+                DisclosureGroup(professional ? "混音与原声" : "声音设置", isExpanded: $mixExpanded) {
+                    mixControls.padding(.top, 12)
+                }.font(.subheadline)
             }
-            HStack { Image(systemName: "speaker.wave.2"); Slider(value: $volume, in: 0...1) { editing in if !editing { change { $0.volume = volume } } } }.accessibilityLabel("\(track.name) 音量")
-            PianoRoll(notes: track.notes, beats: beats).frame(height: 44)
-            }
-            HStack {
+            MusicGlassGroup { HStack(spacing: 12) {
                 Button(professional ? "编辑音符" : "修改旋律", action: onEdit).frame(minHeight: 44)
                 Spacer()
                 Button(action: onRecord) { Image(systemName: "mic").frame(width: 44, height: 44) }.accessibilityLabel("在 \(track.name) 录唱")
                 Button(action: onImport) { Image(systemName: "square.and.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("导入 \(track.name)")
-            }.font(.caption)
+            }.font(.subheadline).musicAction() }
+            if professional, let source = track.recognitionSource { Text(source).font(.caption2).foregroundStyle(.secondary) }
+            if let text = track.transcript, !text.isEmpty { Text("歌词 / 口述\n" + text).font(.caption).textSelection(.enabled) }
+        }.musicCard(radius: 24)
+            .onAppear { volume = track.volume; mixExpanded = professional }.onChange(of: track.volume) { _, value in volume = value }
+            .alert("无法移动", isPresented: Binding(get: { movementError != nil }, set: { if !$0 { movementError = nil } })) { Button("知道了", role: .cancel) { movementError = nil } } message: { Text(movementError ?? "") }
+            .alert("音轨名称", isPresented: $rename) { TextField("名称", text: $name); Button("保存") { change { $0.name = name.isEmpty ? "未命名声部" : String(name.prefix(60)) } }; Button("取消", role: .cancel) {} }
+            .confirmationDialog("删除这条音轨？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("删除音轨", role: .destructive, action: onDelete); Button("取消", role: .cancel) {} } message: { Text("可通过撤销恢复；原始文件不会立即删除。") }
+    }
+    private var mixControls: some View {
+        VStack(spacing: 12) {
+            Toggle(professional ? "静音" : "暂时不播放", isOn: Binding(get: { track.muted }, set: { value in change { $0.muted = value } }))
+            Toggle(professional ? "独奏" : "只听这个声音", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } }))
+            HStack { Image(systemName: "speaker.wave.2"); Slider(value: $volume, in: 0...1) { editing in if !editing { change { $0.volume = volume } } } }.accessibilityLabel("\(track.name) 音量")
+            PianoRoll(notes: track.notes, beats: beats).frame(height: 44)
             if hasSource {
                 Picker("此轨试听", selection: Binding(get: { track.useOriginalAudio ?? false }, set: { value in change { $0.useOriginalAudio = value } })) { Text("乐器演奏").tag(false); Text("原声录音").tag(true) }.pickerStyle(.segmented)
             }
             if professional { sourceControls }
-            if professional, let source = track.recognitionSource { Text(source).font(.caption2).foregroundStyle(.secondary) }
-            if let text = track.transcript, !text.isEmpty { Text("歌词 / 口述\n" + text).font(.caption).textSelection(.enabled) }
-        }.musicCard(radius: 20)
-            .onAppear { volume = track.volume }.onChange(of: track.volume) { _, value in volume = value }
-            .alert("无法移动", isPresented: Binding(get: { movementError != nil }, set: { if !$0 { movementError = nil } })) { Button("知道了", role: .cancel) { movementError = nil } } message: { Text(movementError ?? "") }
-            .alert("音轨名称", isPresented: $rename) { TextField("名称", text: $name); Button("保存") { change { $0.name = name.isEmpty ? "未命名声部" : String(name.prefix(60)) } }; Button("取消", role: .cancel) {} }
-            .confirmationDialog("删除这条音轨？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("删除音轨", role: .destructive, action: onDelete); Button("取消", role: .cancel) {} } message: { Text("可通过撤销恢复；原始文件不会立即删除。") }
+        }
     }
     private var sourceControls: some View {
         VStack(alignment: .leading, spacing: 12) {

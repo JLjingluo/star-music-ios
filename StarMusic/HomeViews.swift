@@ -16,24 +16,15 @@ struct CreationHome: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("哼出旋律，写成自己的歌", systemImage: "waveform")
-                        .font(.title3.weight(.semibold)).foregroundStyle(.primary)
-                    if rawMode != StudioMode.simple.rawValue {
-                        Text("录下脑海里的旋律，整理成可以继续修改的音乐。").font(.subheadline).foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("哼出旋律，\n写成自己的歌。")
+                        .font(.title2.weight(.medium)).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                     Button { pendingChoice = nil; chooser = true } label: {
                         Label("开始创作", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
-                    }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent).accessibilityIdentifier("home.start")
-                }.padding(.vertical, 8)
+                    }.musicAction(prominent: true).accessibilityIdentifier("home.start")
+                }.padding(.vertical, 20)
                 Button(action: onImport) { Label("导入音乐", systemImage: "square.and.arrow.down") }
                     .accessibilityIdentifier("home.import")
-            }
-            if rawMode != StudioMode.simple.rawValue {
-                Section("创作工具") {
-                    Button { onStart(false) } label: { Label("空白乐谱", systemImage: "music.note.list") }.accessibilityIdentifier("home.blank")
-                    Button { instruments = true } label: { Label("乐器库", systemImage: "pianokeys") }.accessibilityIdentifier("home.instruments")
-                }
             }
             Section {
                 if drafts.isEmpty {
@@ -46,7 +37,13 @@ struct CreationHome: View {
                 Text(RecognitionSettings.load().engine == .cloud ? "主动使用你的模型时，所选录音会发送至你配置的接口。" : "草稿保存在这台设备上，离线也能继续创作。")
             }
         }.navigationTitle("Star Music")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(action: onHelp) { Label("帮助", systemImage: "questionmark.circle") } } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("空白乐谱", systemImage: "music.note.list") { onStart(false) }.accessibilityIdentifier("home.blank")
+                    Button("乐器库", systemImage: "pianokeys") { instruments = true }.accessibilityIdentifier("home.instruments")
+                    Button("帮助", systemImage: "questionmark.circle", action: onHelp)
+                } label: { Label("创作工具与帮助", systemImage: "ellipsis") }
+            } }
             .sheet(isPresented: $chooser, onDismiss: performChoice) { creationSheet }
             .sheet(isPresented: $instruments) { InstrumentSheet() }
     }

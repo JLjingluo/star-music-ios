@@ -41,7 +41,7 @@ struct MelodyCanvas: View {
                 VStack { Text("高"); Spacer(); Text("低") }.font(.caption2).foregroundStyle(.secondary).frame(height: 160)
                 ScrollView(.horizontal, showsIndicators: false) { plot }
             }
-        }.musicCard(radius: 20).accessibilityElement(children: .contain).accessibilityIdentifier("editor.melody")
+        }.musicCard(radius: 28).accessibilityElement(children: .contain).accessibilityIdentifier("editor.melody")
             .onAppear { fit(initial: true) }.onChange(of: notes) { _, _ in fit(initial: false) }
     }
     private var plot: some View {
@@ -111,21 +111,18 @@ struct KeyShiftSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("找到更舒服的高度。").font(.title2.weight(.medium))
-                    Text("整首旋律一起升高或降低，前后顺序和节奏保持不变。原始录音保留，试听使用乐器演奏。").font(.subheadline).foregroundStyle(.secondary)
                     if project.tracks.contains(where: { $0.useOriginalAudio == true && !$0.muted && $0.notes.allSatisfy({ $0.midi == nil }) }) { Text("有一部分只有录音，还没有整理成旋律。这部分保持原来的高度。").font(.caption).foregroundStyle(.secondary) }
                     HStack {
-                        Button { steps = max(-24, steps - 1); audio.stopPlayback() } label: { Label("低一点", systemImage: "minus").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("key.lower")
-                        Button { steps = min(24, steps + 1); audio.stopPlayback() } label: { Label("高一点", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("key.higher")
+                        Button { steps = max(-24, steps - 1); audio.stopPlayback() } label: { Label("低一点", systemImage: "minus").frame(maxWidth: .infinity, minHeight: 48) }.musicAction().accessibilityIdentifier("key.lower")
+                        Button { steps = min(24, steps + 1); audio.stopPlayback() } label: { Label("高一点", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 48) }.musicAction().accessibilityIdentifier("key.higher")
                     }
                     Text(professional ? "移调：\(steps) 个半音" : description).font(.headline).frame(maxWidth: .infinity).accessibilityIdentifier("key.height")
                     Button("回到原来的高度") { steps = 0; audio.stopPlayback() }.frame(minHeight: 44)
                     Button(previewing ? "正在准备试听…" : "先听听") { Task { await preview() } }.frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.bordered).disabled(previewing).accessibilityIdentifier("key.preview")
-                    GoldButton(title: "用这个调", symbol: "checkmark") { apply() }.accessibilityIdentifier("key.apply")
                     if let error { Text(error).font(.caption).foregroundStyle(.secondary) }
-                }
+                } footer: { Text("整首一起升高或降低，节奏不变。原录音保留，试听使用乐器演奏。") }
             }.navigationTitle("换个调").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("用这个调") { apply() }.accessibilityIdentifier("key.apply") } }
         }.onDisappear { audio.stopPlayback() }
     }
     private func apply() {

@@ -51,3 +51,7 @@ Official references read for this change:
 ## Verification status
 
 Local Swift parsing/project/plist checks pass; these are not Xcode compilation. Native XCTest, iOS 26 UI flows, actual simulator screenshots and the new IPA must be verified before the delivery record is marked complete. Live iPhone microphone/interruptions and a real user-configured cloud model remain outside simulator verification.
+
+### Build 8 refinement after visual review
+
+Removed the redundant home tools section, editor tool-card grid, full-width key-shift row and inline expanded note inspector. Secondary creation tools use the native toolbar menu; editor tools use a native Menu; note correction uses a standard sheet. Ordinary track mixing uses DisclosureGroup. The music-only surfaces use continuous 24–28 pt corners. Action groups explicitly use iOS 26 GlassEffectContainer and .glass / .glassProminent button styles, with system bordered fallbacks before iOS 26. System List/Form, navigation, sheets and tab bar retain their platform appearance. These changes are subject to fresh Xcode compilation and actual simulator capture; previous build 7 screenshots do not validate build 8.

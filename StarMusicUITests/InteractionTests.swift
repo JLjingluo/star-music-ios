@@ -46,7 +46,7 @@ final class InteractionTests: XCTestCase {
         capture("Profile-Light")
     }
     func testTrackChooserModesAndModelConfiguration() {
-        let app = launch(); blank(app); app.swipeUp(); app.buttons["editor.addTrack"].tap()
+        let app = launch(); blank(app); app.buttons["editor.toolsMenu"].tap(); app.buttons["editor.addTrack"].tap()
         XCTAssertTrue(app.buttons["track.addRecording"].waitForExistence(timeout: 5)); XCTAssertTrue(app.buttons["track.addImport"].exists); capture("Track-Chooser")
         app.buttons["track.addBlank"].tap(); XCTAssertTrue(app.buttons["编辑 声音 2 的音符"].waitForExistence(timeout: 5)); capture("Tracks-Standard")
         app.swipeDown(); mode("简洁模式", app)
@@ -63,13 +63,12 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "BPM")).firstMatch.exists)
         app.buttons["editor.addNote"].tap(); app.otherElements["editor.melody"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
-        app.swipeUp() // Reveal the complete button above the native bottom toolbar.
         app.buttons["editor.keyShift"].tap(); XCTAssertTrue(app.buttons["key.higher"].waitForExistence(timeout: 5)); app.buttons["key.higher"].tap()
         XCTAssertTrue(app.staticTexts["比原来高 1 点"].exists); capture("Key-Shift-Plain")
         app.buttons["key.preview"].tap(); app.buttons["key.apply"].tap(); XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))
         app.swipeDown(); mode("简洁模式", app)
         XCTAssertFalse(app.buttons["recognition.engine"].exists); XCTAssertFalse(app.staticTexts["4/4 拍"].exists); XCTAssertFalse(app.buttons["editor.addTrack"].exists); capture("Melody-Simple")
-        app.buttons["展开更多工具"].tap(); XCTAssertTrue(app.buttons["editor.addTrack"].exists)
+        app.buttons["展开更多工具"].tap(); app.buttons["editor.toolsMenu"].tap(); XCTAssertTrue(app.buttons["editor.addTrack"].exists); app.tap()
         app.swipeDown(); mode("普通模式", app); XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5)); capture("Melody-Standard")
     }
     func testNativeTabHistoryAndEdgeSwipeBack() {
@@ -90,7 +89,7 @@ final class InteractionTests: XCTestCase {
         app.buttons["recording.cancel"].tap(); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
     }
     func testCoordinateFreeNoteEntryAndProfessionalScore() {
-        let app = launch(); blank(app); app.swipeUp()
+        let app = launch(); blank(app); app.buttons["editor.toolsMenu"].tap()
         app.buttons["editor.noteEntry"].tap()
         XCTAssertTrue(app.buttons["noteEntry.add"].waitForExistence(timeout: 5)); capture("Accessible-Note-Entry")
         app.buttons["noteEntry.add"].tap()

@@ -18,6 +18,7 @@ import UniformTypeIdentifiers
     @State private var renaming = false
     @State private var newName = ""
     @State private var noteEntry = false
+    @State private var noteCorrection = false
     @State private var overflow: Double?
     @State private var processing = false
     @State private var analysis: Task<Void, Never>?
@@ -61,11 +62,10 @@ import UniformTypeIdentifiers
     }
     private var editorContent: some View {
         ScrollView {
-                VStack(spacing: 18) {
+                VStack(spacing: 24) {
                     editorHeader
                     melodyContent
                     playbackBar
-                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered).accessibilityIdentifier("editor.keyShift")
                     editingTools
                 }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
             }.background(Palette.background(scheme))
@@ -83,13 +83,12 @@ import UniformTypeIdentifiers
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { audio.stopPlayback(); session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.disabled(session.undoHistory.isEmpty).accessibilityLabel("撤销")
                     Button { audio.stopPlayback(); session.redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44) }.disabled(session.redoHistory.isEmpty).accessibilityLabel("重做")
-                    Spacer(); Button(professional ? "导出" : "保存与分享") { export = true }.frame(minHeight: 44); if professional { Button("发布") { publish = true }.frame(minHeight: 44) }
+                    Spacer(); Button { export = true } label: { Label("保存与分享", systemImage: "square.and.arrow.up") }.accessibilityLabel("保存与分享")
                 }
             }
     @ViewBuilder private var editorHeader: some View {
                     HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); Button(session.saveStatus) { if !session.persist() { saveFailure = true } }.font(.caption).frame(minHeight: 44).foregroundStyle(.secondary).accessibilityIdentifier("editor.saveStatus") }
                     if professional { parameterBar }
-                    if standard { Text("下面的线条表示旋律高低，往右就是后面的声音。你可以先听，再轻点一个片段修改。").font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() }
                     Picker("编辑视图", selection: $multiTrack) { Text(professional ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各个声音").tag(true) }.pickerStyle(.segmented)
     }
@@ -98,41 +97,60 @@ import UniformTypeIdentifiers
                     else {
                         if professional {
                         ScoreCanvas(notes: session.track.notes, bars: session.project.bars, selected: session.selectedNote, addMode: addMode,
-                                    onSelect: { session.selectedNote = $0 }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveNote)
+                                    onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveNote)
                         } else {
-                            MelodyCanvas(notes: session.track.notes, beats: session.project.beats, selected: session.selectedNote, addMode: addMode, onSelect: { session.selectedNote = $0 }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveMelodyNote)
+                            MelodyCanvas(notes: session.track.notes, beats: session.project.beats, selected: session.selectedNote, addMode: addMode, onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveMelodyNote)
                         }
-                        if session.selected != nil { noteInspector.transition(.opacity.combined(with: .move(edge: .top))) }
-                        else if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                        if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
     }
-    @ViewBuilder private var editingTools: some View {
-                    if !simpleMode { LazyVGrid(columns: [GridItem(.adaptive(minimum: 135))], spacing: 10) {
-                        ToolCard(title: addMode ? "结束添加" : professional ? "添加音符" : "写一个声音", subtitle: professional ? "明确的添加模式" : "轻点旋律图，写下声音", symbol: "plus") { addMode.toggle() }.accessibilityIdentifier("editor.addNote")
-                        ToolCard(title: "乐器", subtitle: session.track.instrument.name, symbol: session.track.instrument.symbol) { instruments = true }
-                        ToolCard(title: professional ? "添加声部" : "添加声音", subtitle: professional ? "空轨、录唱或文件" : "再录一段，或导入文件", symbol: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
-                        if professional { Menu {
-                            Button("换个调") { transpose = true }
-                            Button("复制主旋律为新轨道") { session.edit { p in var t = p.tracks[0]; t.id = UUID(); t.name += " · 副本"; t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; p.tracks.append(t) }; multiTrack = true }
-                            Button("复制当前小节到结尾") { copyBar() }
-                            Button("量化当前轨道") { let index = session.trackIndex; session.edit { p in for i in p.tracks[index].notes.indices { p.tracks[index].notes[i].start = (p.tracks[index].notes[i].start * 4).rounded() / 4; p.tracks[index].notes[i].duration = max(0.25, (p.tracks[index].notes[i].duration * 4).rounded() / 4) }; p.freeRhythm = false } }
-                            if session.store.recordingURL(session.project, trackID: session.track.id) != nil {
-                                Button("试听原始录音") { if let url = session.store.recordingURL(session.project, trackID: session.track.id) { do { try audio.playOriginal(url) } catch { session.store.error = error.localizedDescription } } }
-                                Button("重新分析原始录音") { reanalyze = true }
-                            }
-                        } label: { HStack { Image(systemName: "ellipsis").frame(width: 30, height: 44); Text("更多工具").font(.subheadline) }.frame(maxWidth: .infinity, minHeight: 72).musicCard() } }
-                    }
-                    }
-                    if simpleMode { HStack(spacing: 10) {
-                        Button(addMode ? "完成添加" : "添加一个声音") { addMode.toggle() }.frame(minHeight: 44).buttonStyle(.bordered)
-                        Button("换种声音") { instruments = true }.frame(minHeight: 44).buttonStyle(.bordered)
-                    } }
-                    if rawMode == StudioMode.simple.rawValue { Button(expandedTools ? "收起更多工具" : "展开更多工具") { expandedTools.toggle() }.frame(minHeight: 44) }
-                    Button { noteEntry = true } label: { Label("按选项添加声音", systemImage: "plus.circle").frame(minHeight: 44) }.accessibilityIdentifier("editor.noteEntry")
-                    Label("原始录音与可编辑旋律分开保留", systemImage: "lock").font(.caption2).foregroundStyle(.secondary)
+    private var editingTools: some View {
+        VStack(spacing: 16) {
+            MusicGlassGroup {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { visibleTools }
+                    VStack(spacing: 12) { visibleTools }
+                }
+            }
+            if rawMode == StudioMode.simple.rawValue {
+                Button(expandedTools ? "收起" : "更多工具") { expandedTools.toggle() }
+                    .accessibilityLabel(expandedTools ? "收起更多工具" : "展开更多工具").frame(minHeight: 44)
+            }
+            if standard && !multiTrack {
+                Text(addMode ? "轻点空白处添加声音，完成后再次点按加号。" : "从左往右是先后，越高的片段声音越高。轻点可修改。")
+                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+        }
+    }
+    @ViewBuilder private var visibleTools: some View {
+        Button { instruments = true } label: { Label(simpleMode ? "换种声音" : session.track.instrument.name, systemImage: session.track.instrument.symbol).frame(minHeight: 44) }.musicAction()
+        if !simpleMode {
+            Button { addMode.toggle() } label: { Label(addMode ? "完成添加" : "添加", systemImage: addMode ? "checkmark" : "plus").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.addNote")
+            Menu {
+                Button(professional ? "添加声部" : "添加声音", systemImage: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
+                Button("按选项添加声音", systemImage: "plus.circle") { noteEntry = true }.accessibilityIdentifier("editor.noteEntry")
+                if professional {
+                    Button("复制主旋律为新轨道") { session.edit { p in var t = p.tracks[0]; t.id = UUID(); t.name += " · 副本"; t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; p.tracks.append(t) }; multiTrack = true }
+                    Button("复制当前小节到结尾") { copyBar() }
+                    Button("量化当前轨道") { let index = session.trackIndex; session.edit { p in for i in p.tracks[index].notes.indices { p.tracks[index].notes[i].start = (p.tracks[index].notes[i].start * 4).rounded() / 4; p.tracks[index].notes[i].duration = max(0.25, (p.tracks[index].notes[i].duration * 4).rounded() / 4) }; p.freeRhythm = false } }
+                    Button("发布作品") { publish = true }
+                }
+                if session.store.recordingURL(session.project, trackID: session.track.id) != nil {
+                    Button("试听原始录音") { playSource(session.track.id) }
+                    Button("重新分析原始录音") { reanalyze = true }
+                }
+            } label: { Label("工具", systemImage: "ellipsis").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.toolsMenu")
+        }
     }
     private var editorPresentations: some View {
         editorContent
+        .sheet(isPresented: $noteCorrection) {
+            NavigationStack {
+                ScrollView { noteInspector.padding(20) }
+                    .navigationTitle(professional ? "音符校正" : "调整这个声音").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { noteCorrection = false } } }
+            }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $noteEntry) { NoteEntrySheet(bpm: session.project.bpm, startBeat: session.track.notes.map { $0.start + $0.duration }.max() ?? 0, professional: professional) { pitch, start, duration in session.addNote(midi: pitch, start: start, duration: duration) } }
         .sheet(isPresented: $instruments) { InstrumentSheet(selectedNote: session.selected != nil, bars: session.project.bars, current: session.track.instrument, professional: professional, onApply: applyInstrument) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
@@ -170,11 +188,20 @@ import UniformTypeIdentifiers
         }.frame(minHeight: 44) }
     }
     private var playbackBar: some View {
-        HStack(spacing: 20) {
-            Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 44, height: 44) }.accessibilityLabel("回到起点")
-            Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent).accessibilityLabel("播放或暂停")
-            Text(professional ? "第 \(min(session.project.bars, Int(audio.playbackSeconds * session.project.bpm / 240) + 1)) / \(session.project.bars) 小节" : musicTime(audio.playbackSeconds) + " / " + musicTime(session.project.seconds)).font(.caption).foregroundStyle(.secondary)
-            Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").foregroundStyle(loop ? Palette.gold : Color.secondary).frame(width: 44, height: 44) }.accessibilityLabel(loop ? "关闭循环" : "开启循环")
+        VStack(spacing: 12) {
+            MusicGlassGroup {
+                HStack(spacing: 12) {
+                    if professional {
+                        Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 32, height: 44) }.musicAction().accessibilityLabel("回到起点")
+                    }
+                    Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.musicAction(prominent: true).accessibilityLabel("播放或暂停")
+                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.keyShift")
+                    if professional {
+                        Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").frame(width: 32, height: 44) }.musicAction().accessibilityLabel(loop ? "关闭循环" : "开启循环").accessibilityAddTraits(loop ? .isSelected : [])
+                    }
+                }
+            }
+            Text(musicTime(audio.playbackSeconds) + " / " + musicTime(session.project.seconds)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity)
     }
     private func moveMelodyNote(_ id: UUID, _ steps: Int) {
@@ -187,7 +214,6 @@ import UniformTypeIdentifiers
     }
     private var friendlyInspector: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("调整这一个声音").font(.headline)
             if standard { Text("升高或降低只改变这一处。想让整首一起变高或变低，请用「换个调」。").font(.caption).foregroundStyle(.secondary) }
             HStack {
                 Button("低一点") { session.editNote { if let pitch = $0.midi { $0.midi = max(0, pitch - 1); $0.confidence = 1 } } }.frame(minHeight: 44)
@@ -202,7 +228,7 @@ import UniformTypeIdentifiers
                     Button("听对应的原录音") { do { try audio.playOriginal(url, from: MusicEdits.originalStart(note, track: session.track, bpm: session.project.bpm), length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } }.frame(minHeight: 44)
                 }
             } else { Button("删除这个声音", role: .destructive) { session.deleteNote() }.frame(minHeight: 44) }
-        }.musicCard(radius: 16)
+        }
     }
     private var professionalInspector: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -221,7 +247,7 @@ import UniformTypeIdentifiers
                 }.font(.caption).buttonStyle(.bordered) }
                 if note.confidence < 0.8 { Text("识别不确定，建议对照原声校正。").font(.caption2).foregroundStyle(.secondary) }
             }
-        }.musicCard(radius: 16)
+        }
     }
     private var trackList: some View {
         VStack(spacing: 12) {
