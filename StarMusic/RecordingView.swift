@@ -34,24 +34,26 @@ import SwiftUI
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    if rawMode == StudioMode.professional.rawValue { Text("CAPTURE YOUR INSPIRATION").font(.caption2).tracking(2).foregroundStyle(.secondary) }
                     Text(audio.recordingState == .ready ? "准备好了，就哼唱吧。" : "把脑海里的旋律，留下来。").font(.title2.weight(.semibold)).multilineTextAlignment(.center)
                     Text(musicTime(audio.elapsed)).font(.system(.largeTitle, design: .monospaced).weight(.light)).monospacedDigit().accessibilityLabel("录音时长 \(Int(audio.elapsed)) 秒")
                     Label(statusText, systemImage: audio.recordingState == .recording ? "record.circle" : "mic").font(.caption).foregroundStyle(audio.recordingState == .recording ? Color(red: 0.89, green: 0.58, blue: 0.53) : Color.secondary)
-                    Waveform(levels: audio.levels).frame(height: 125).padding(.horizontal, 10)
+                    Waveform(levels: audio.levels).frame(height: 125).musicCard(radius: 28)
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() } else if RecognitionSettings.load().engine == .cloud { Text("主动识别会把录音发送到你配置的模型服务。").font(.caption).foregroundStyle(.secondary) }
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
-                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.buttonStyle(.borderedProminent).tint(.red).accessibilityIdentifier("recording.start")
+                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true).tint(.red).accessibilityIdentifier("recording.start")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
-                            Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.buttonStyle(.bordered).frame(minHeight: 44)
+                            Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.musicAction().frame(minHeight: 44)
                             GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送原声并识别" : rawMode == StudioMode.professional.rawValue ? "完成并生成乐谱" : "完成，整理旋律", symbol: "checkmark") { finishAndAnalyze() }
                         }
                     } else { GoldButton(title: "整理这段旋律", symbol: "music.note") { finishAndAnalyze() } }
-                    Text("在安静环境中，清晰地哼唱一条旋律。\n首版支持单声部哼唱，不承诺识别复杂歌曲。\n原始录音保存在本机，最长支持 5 分钟转谱。").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(5)
-                }.padding(24).frame(maxWidth: 850).frame(maxWidth: .infinity).padding(16)
+                    DisclosureGroup("录音小提示") {
+                        Text("在安静环境中哼唱一条旋律，可提高准确度。暂不支持复杂歌曲。原录音保存在本机，最多分析 5 分钟。")
+                            .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+                    }.font(.subheadline).foregroundStyle(.secondary)
+                }.padding(20).frame(maxWidth: 850).frame(maxWidth: .infinity)
             }.background(Palette.background(scheme)).navigationTitle(project.name).navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { if createdFile != nil { audio.pauseRecording(); saveRecordingMetadata(); leaving = true } else { dismiss() } }.accessibilityIdentifier("recording.cancel") } }
         }

@@ -68,7 +68,7 @@ final class InteractionTests: XCTestCase {
         app.buttons["key.preview"].tap(); app.buttons["key.apply"].tap(); XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))
         app.swipeDown(); mode("简洁模式", app)
         XCTAssertFalse(app.buttons["recognition.engine"].exists); XCTAssertFalse(app.staticTexts["4/4 拍"].exists); XCTAssertFalse(app.buttons["editor.addTrack"].exists); capture("Melody-Simple")
-        app.buttons["展开更多工具"].tap(); app.buttons["editor.toolsMenu"].tap(); XCTAssertTrue(app.buttons["editor.addTrack"].exists); app.tap()
+        app.buttons["展开更多工具"].tap(); app.buttons["editor.toolsMenu"].tap(); XCTAssertTrue(app.buttons["editor.addTrack"].exists); app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.3)).tap()
         app.swipeDown(); mode("普通模式", app); XCTAssertTrue(app.otherElements["editor.melody"].waitForExistence(timeout: 5)); capture("Melody-Standard")
     }
     func testNativeTabHistoryAndEdgeSwipeBack() {
