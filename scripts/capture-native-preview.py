@@ -1,54 +1,44 @@
 #!/usr/bin/env python3
-"""Capture genuine Release app screenshots and launch video, with bounded simulator recovery."""
-import os,signal,subprocess,time
+"""Capture the real Release app through XCTest's device/launch manager and recording support."""
+import json,os,shutil,subprocess,xml.etree.ElementTree as XML
 from pathlib import Path
-sim=os.environ['SIMULATOR_ID'];out=Path('artifacts');out.mkdir(exist_ok=True)
-files=[out/n for n in ['StarMusic-Home.png','StarMusic-Home-Light.png','StarMusic-Entrance.mp4']]
-def run(*args,timeout=60,check=True):
-    print('simctl:',args[0],flush=True)
-    return subprocess.run(['xcrun','simctl',*args],check=check,timeout=timeout)
-def stop_video(video):
-    video.send_signal(signal.SIGINT)
-    try:video.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        video.terminate()
-        try:video.wait(timeout=5)
-        except subprocess.TimeoutExpired:video.kill();video.wait(timeout=5)
-def capture():
-    # Warm CoreSimulator/its app services before starting the GPU-backed video recorder.
-    # The actual video still records a subsequent process launch and real system transition.
-    run('shutdown',sim,timeout=30,check=False)
-    run('boot',sim,timeout=30)
-    developer=Path(subprocess.check_output(['xcode-select','-p'],text=True).strip())
-    subprocess.run(['open','-a',str(developer/'Applications/Simulator.app'),'--args','-CurrentDeviceUDID',sim],check=True,timeout=30)
-    run('bootstatus',sim,'-b',timeout=120)
-    run('io',sim,'screenshot',str(out/'Simulator-Ready.png'),timeout=45)
-    run('install',sim,'build/simulator/Build/Products/Release-iphonesimulator/StarMusic.app',timeout=90)
-    run('status_bar',sim,'override','--time','9:41','--dataNetwork','wifi','--wifiMode','active','--wifiBars','3','--batteryState','charged','--batteryLevel','100',timeout=30)
-    run('launch',sim,'music.star.starmusic','-appearance','dark',timeout=90)
-    time.sleep(3)
-    run('terminate',sim,'music.star.starmusic',timeout=30)
-    video=subprocess.Popen(['xcrun','simctl','io',sim,'recordVideo','--codec=h264',str(files[2])])
-    try:
-        time.sleep(1)
-        run('launch',sim,'music.star.starmusic','-appearance','dark',timeout=60)
-        time.sleep(3)
-        run('io',sim,'screenshot',str(files[0]),timeout=45)
-    finally:stop_video(video)
-    if not files[2].is_file() or files[2].stat().st_size<10000:
-        raise RuntimeError('Native launch video was not captured')
-    run('terminate',sim,'music.star.starmusic',timeout=30)
-    run('launch',sim,'music.star.starmusic','-appearance','light',timeout=60)
-    time.sleep(2)
-    run('io',sim,'screenshot',str(files[1]),timeout=45)
-for attempt in range(2):
-    for file in files:file.unlink(missing_ok=True)
-    try:
-        capture();break
-    except (subprocess.SubprocessError,RuntimeError) as error:
-        print('Native capture attempt failed:',attempt+1,str(error),flush=True)
-        try:run('io',sim,'screenshot',str(out/f'StarMusic-Capture-Failure-{attempt+1}.png'),timeout=30)
-        except subprocess.SubprocessError as diagnostic:print('Failure screenshot unavailable:',str(diagnostic),flush=True)
-        if attempt==1:raise
-        run('shutdown',sim,timeout=30,check=False)
-print('Actual native dark/light and process-launch captures completed.',flush=True)
+
+out=Path('artifacts');out.mkdir(exist_ok=True)
+source=Path('StarMusic.xcodeproj/xcshareddata/xcschemes/StarMusic.xcscheme')
+tree=XML.parse(source);root=tree.getroot()
+# Use a temporary capture-only scheme; no app, model, test source or project setting changes.
+for parent_path,child_tag in [('BuildAction/BuildActionEntries','BuildActionEntry'),('TestAction/Testables','TestableReference')]:
+    parent=root.find(parent_path);assert parent is not None
+    for child in list(parent):
+        reference=child.find('BuildableReference')
+        if reference is not None and reference.get('BlueprintName')=='StarMusicTests':parent.remove(child)
+action=root.find('TestAction');assert action is not None
+for key,value in {'buildConfiguration':'Release','preferredScreenCaptureFormat':'screenRecording','systemAttachmentLifetime':'keepAlways','userAttachmentLifetime':'keepAlways'}.items():action.set(key,value)
+launch=root.find('LaunchAction')
+if launch is not None:launch.set('buildConfiguration','Release')
+tree.write(source.with_name('StarMusicPreview.xcscheme'),encoding='UTF-8',xml_declaration=True)
+command=['xcodebuild','test','-project','StarMusic.xcodeproj','-scheme','StarMusicPreview','-configuration','Release','-destination','platform=iOS Simulator,id='+os.environ['SIMULATOR_ID'],'-derivedDataPath','build/simulator','-resultBundlePath','build/ReleasePreview.xcresult','-only-testing:StarMusicUITests/InteractionTests/testCreationSheetOpensEditorAndHidesNavigation','-only-testing:StarMusicUITests/InteractionTests/testLightAppearanceAndNativeSettingsToggle','CODE_SIGNING_ALLOWED=YES','CODE_SIGN_IDENTITY=-','-parallel-testing-enabled','NO']
+# XCTest manages boot/install/launch; avoid the standalone simctl service failures on this image.
+subprocess.run(command,check=True,timeout=1200)
+captures=out/'release-ui'
+subprocess.run(['xcrun','xcresulttool','export','attachments','--path','build/ReleasePreview.xcresult','--output-path',str(captures)],check=True,timeout=90)
+manifest=json.loads((captures/'manifest.json').read_text())
+found=set();video=None
+for group in manifest:
+    creation='testCreationSheetOpensEditorAndHidesNavigation' in group.get('testIdentifier','')
+    for attachment in group['attachments']:
+        filename=attachment['exportedFileName'];friendly=attachment.get('suggestedHumanReadableName','')
+        original=captures/filename
+        if friendly.startswith('Home-Dark_') and filename.endswith('.png'):
+            shutil.copy2(original,out/'StarMusic-Home.png');found.add('dark')
+        if friendly.startswith('Home-Light_') and filename.endswith('.png'):
+            shutil.copy2(original,out/'StarMusic-Home-Light.png');found.add('light')
+        if creation and filename.endswith('.mp4'):video=original
+assert found=={'dark','light'},'Actual Release appearance captures missing'
+assert video is not None and video.stat().st_size>10000,'XCTest did not preserve an actual native screen recording'
+# The unmodified recording includes the process launch and native creation/navigation flow.
+shutil.copy2(video,out/'StarMusic-Entrance.mp4')
+for file in captures.iterdir():
+    if file.is_file() and file.suffix in ('.png','.json'):
+        target=out/'ui';target.mkdir(exist_ok=True);shutil.copy2(file,target/('Release-'+file.name))
+print('Actual Release UI smoke tests, dark/light screenshots and native launch/creation recording verified.',flush=True)
