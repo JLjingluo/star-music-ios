@@ -60,6 +60,7 @@ struct RootView: View {
     @EnvironmentObject var store: ProjectStore
     @EnvironmentObject var audio: AudioController
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("hapticsEnabled") private var haptics = true
     @State private var tab = 0
     @State private var route: ProjectRoute?
     @State private var communityRoute: ProjectRoute?
@@ -83,6 +84,7 @@ struct RootView: View {
                     .navigationDestination(item: $profileRoute) { ProjectWorkspace(route: $0).toolbar(.hidden, for: .tabBar) }
             }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(3)
         }
+        .sensoryFeedback(.selection, trigger: tab) { _, _ in haptics }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
         .sheet(isPresented: $help) { HelpView() }
         .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .midi, .json, .data], allowsMultipleSelection: false) { result in

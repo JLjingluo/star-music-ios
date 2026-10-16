@@ -28,7 +28,7 @@ This implementation applies the supplied seven-page native-iOS brief to the exis
 
 Deleted `MusicTabBar`, `TabSurface`, `MusicPressStyle`, `JellyToggleStyle`, `LikeBurstButton`, `DraftCollectionLayout`, `CascadeEntrance`, the fake root brand/navigation header and decorative home stave/gradient container. `CardStyle` is replaced by a thin native `GroupBox` wrapper, not a custom bordered/shadowed card. `GoldButton` delegates to standard `.borderedProminent`; it draws no button background. Removed custom chevron-left controls, manual sheet dimming and `.presentationCornerRadius` overrides.
 
-No `UITabBarAppearance`, custom back-button hiding, gesture interception or app-wide glass simulation is introduced. Brand yellow remains an accent; semantic system backgrounds and primary/secondary text follow appearance, contrast and accessibility. Navigation and modal movement use default system transitions. Ordinary mode retains plain explanations, simple mode hides secondary tools, and professional mode retains notation/parameters.
+No `UITabBarAppearance`, custom back-button hiding, gesture interception or app-wide glass simulation is introduced. Brand yellow remains an accent; semantic system backgrounds and primary/secondary text follow appearance, contrast and accessibility. Navigation and modal movement use default system transitions. The existing touch-feedback preference gates SwiftUI selection sensory feedback when changing sections; no custom press style or UIKit impact generator remains. Ordinary mode retains plain explanations, simple mode hides secondary tools, and professional mode retains notation/parameters.
 
 ## Retained custom/native bridges
 
