@@ -32,4 +32,10 @@ jobs:
           if [ "$RESULT_PATH" = results ]; then mv results TestResults.xcresult; RESULT_PATH=TestResults.xcresult; fi
           xcrun xcresulttool export attachments --path "$RESULT_PATH" --output-path ui
           SOURCE_SHA=$(gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID" --jq .head_sha)
-          gh release create "diagnostic-ui-$SOURCE_RUN_ID" ui/*.png ui/*.json --prerelease --target "$SOURCE_SHA" --title "Native UI diagnostics $SOURCE_RUN_ID" --notes 'Actual screenshots from a failed native test run, for debugging only. No successful build or installable app is claimed.'
+          shopt -s nullglob
+          UI_ASSETS=(ui/*.png ui/*.json ui/*.txt ui/*.mp4)
+          if gh release view "diagnostic-ui-$SOURCE_RUN_ID" >/dev/null 2>&1; then
+            gh release upload "diagnostic-ui-$SOURCE_RUN_ID" "${UI_ASSETS[@]}" --clobber
+          else
+            gh release create "diagnostic-ui-$SOURCE_RUN_ID" "${UI_ASSETS[@]}" --prerelease --target "$SOURCE_SHA" --title "Native UI diagnostics $SOURCE_RUN_ID" --notes 'Actual screenshots from a failed native test run, for debugging only. No successful build or installable app is claimed.'
+          fi

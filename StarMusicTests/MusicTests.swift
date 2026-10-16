@@ -494,7 +494,8 @@ final class AuditRegressionTests: XCTestCase {
     func testStreamingHighRateMultichannelDecodeIsMonoAndBounded() throws {
         let root = temporaryRoot(); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("wide.caf")
-        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 192000, channels: 8, interleaved: false))
+        let layout = try XCTUnwrap(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 8))
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 192000, interleaved: false, channelLayout: layout))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)); buffer.frameLength = 4096
         for channel in 0..<8 { for i in 0..<4096 { buffer.floatChannelData![channel][i] = Float(0.1 * sin(2 * Double.pi * 375 * Double(i) / 192000)) } }
         do { let file = try AVAudioFile(forWriting: url, settings: format.settings); for _ in 0..<48 { try file.write(from: buffer) } }

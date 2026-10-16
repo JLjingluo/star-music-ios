@@ -106,6 +106,7 @@ enum MIDI {
             for event in ordered where event.tick <= tick { result += Double(event.tick - previous) / Double(ppq) * Double(tempo) / 1_000_000; previous = event.tick; tempo = event.microseconds }
             return result + Double(tick - previous) / Double(ppq) * Double(tempo) / 1_000_000
         }
+        let directBeats = ordered.allSatisfy { $0.microseconds == initial } && (30...300).contains(60000000 / Double(initial))
         for chunk in chunks {
             let groups = Dictionary(grouping: chunk.notes) { "\($0.port):\($0.channel):\($0.program)" }
             for key in groups.keys.sorted() {
@@ -116,7 +117,7 @@ enum MIDI {
                 track.muted = chunk.state?.muted ?? false; track.solo = chunk.state?.solo ?? false
                 track.notes = values.map { note in
                     let start = seconds(note.start), finish = seconds(note.end)
-                    return MusicNote(midi: note.pitch, start: start * p.bpm / 60, duration: (finish - start) * p.bpm / 60)
+                    return MusicNote(midi: note.pitch, start: directBeats ? Double(note.start) / Double(ppq) : start * p.bpm / 60, duration: directBeats ? Double(note.end - note.start) / Double(ppq) : (finish - start) * p.bpm / 60)
                 }.sorted { $0.start < $1.start }
                 p.tracks.append(track); guard p.tracks.count <= 128 else { throw MusicError.midiCapacity }
             }

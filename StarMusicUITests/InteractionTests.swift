@@ -33,7 +33,7 @@ final class InteractionTests: XCTestCase {
         let field = app.searchFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText("zzNoMatchingDraftzz")
         XCTAssertTrue(app.staticTexts["没有匹配的旋律"].waitForExistence(timeout: 5)); capture("Drafts-Native-Search")
-        field.buttons.firstMatch.tap(); app.buttons["Cancel"].tap()
+        field.buttons.firstMatch.tap(); app.buttons["Close"].tap()
         app.buttons["drafts.layout"].tap(); XCTAssertEqual(app.buttons["drafts.layout"].label, "切换为列表"); capture("Drafts-Grid")
         app.buttons["drafts.layout"].tap(); XCTAssertEqual(app.buttons["drafts.layout"].label, "切换为网格")
     }

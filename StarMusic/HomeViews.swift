@@ -229,7 +229,7 @@ struct DemoWorkDetail: View {
                 Text(DemoMusic.titles[index]).font(.title2.weight(.semibold))
                 Text("\(DemoMusic.authors[index]) · 演示创作者").foregroundStyle(.secondary)
                 Text("从日常的一点情绪出发，把它写成旋律。希望这段音乐也能陪伴你的某一个瞬间。")
-                Button { Task { do { try await audio.play(project) } catch { store.error = error.localizedDescription } } } label: { Label(audio.playingID == project.id ? "暂停" : "播放作品", systemImage: audio.playingID == project.id ? "pause.fill" : "play.fill") }
+                Button { Task { do { try await audio.play(project) } catch { store.error = error.localizedDescription } } } label: { Label(audio.playingID == project.id && !audio.paused ? "暂停" : "播放作品", systemImage: audio.playingID == project.id && !audio.paused ? "pause.fill" : "play.fill") }
             }
             Section("本地互动") {
                 Button { toggle(index, in: &likes, key: "demoLikes") } label: { Label(likes.contains(index) ? "取消本地喜欢" : "本地喜欢", systemImage: likes.contains(index) ? "heart.fill" : "heart") }
