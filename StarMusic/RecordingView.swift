@@ -42,7 +42,7 @@ import SwiftUI
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
-                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true).tint(.red).accessibilityIdentifier("recording.start")
+                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true, prominentTint: .red).accessibilityIdentifier("recording.start")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.musicAction().frame(minHeight: 44)

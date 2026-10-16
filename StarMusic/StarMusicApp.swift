@@ -44,12 +44,13 @@ struct MusicGroupStyle: ViewModifier {
 }
 struct MusicActionStyle: ViewModifier {
     var prominent = false
+    var prominentTint: Color = Palette.gold
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            if prominent { content.buttonStyle(.glassProminent).foregroundStyle(Palette.onAccent) }
+            if prominent { content.buttonStyle(.glassProminent).tint(prominentTint).foregroundStyle(Color.black) }
             else { content.buttonStyle(.glass) }
         } else {
-            if prominent { content.buttonStyle(.borderedProminent).foregroundStyle(Palette.onAccent) }
+            if prominent { content.buttonStyle(.borderedProminent).tint(prominentTint).foregroundStyle(Color.black) }
             else { content.buttonStyle(.bordered) }
         }
     }
@@ -63,7 +64,7 @@ struct MusicGlassGroup<Content: View>: View {
 }
 extension View {
     func musicCard(radius: CGFloat = 24) -> some View { modifier(MusicGroupStyle(radius: radius)) }
-    func musicAction(prominent: Bool = false) -> some View { modifier(MusicActionStyle(prominent: prominent)) }
+    func musicAction(prominent: Bool = false, prominentTint: Color = Palette.gold) -> some View { modifier(MusicActionStyle(prominent: prominent, prominentTint: prominentTint)) }
 }
 
 struct GoldButton: View {

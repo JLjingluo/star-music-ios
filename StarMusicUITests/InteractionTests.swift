@@ -51,7 +51,8 @@ final class InteractionTests: XCTestCase {
         app.buttons["track.addBlank"].tap(); XCTAssertTrue(app.buttons["编辑 声音 2 的音符"].waitForExistence(timeout: 5)); capture("Tracks-Standard")
         app.swipeDown(); mode("简洁模式", app)
         XCTAssertTrue(app.buttons["展开更多工具"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons["recognition.engine"].exists); capture("Tracks-Simple")
-        app.buttons["展开更多工具"].tap(); XCTAssertTrue(app.buttons["收起更多工具"].exists)
+        app.swipeUp() // Reveal the whole control above the native bottom toolbar in the two-track view.
+        app.buttons["展开更多工具"].tap(); XCTAssertTrue(app.buttons["收起更多工具"].waitForExistence(timeout: 5)); capture("Tracks-Simple-Tools")
         app.swipeDown(); mode("专业模式", app); XCTAssertTrue(app.buttons["recognition.engine"].waitForExistence(timeout: 5)); capture("Tracks-Professional")
         back(app); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5)); app.tabBars.buttons["我的"].tap()
         let modelLink = app.buttons["识谱与我的模型"]; if !modelLink.isHittable { app.swipeUp() }; modelLink.tap()
@@ -93,7 +94,10 @@ final class InteractionTests: XCTestCase {
         app.buttons["editor.noteEntry"].tap()
         XCTAssertTrue(app.buttons["noteEntry.add"].waitForExistence(timeout: 5)); capture("Accessible-Note-Entry")
         app.buttons["noteEntry.add"].tap()
-        XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5)); app.swipeDown(); mode("专业模式", app)
+        XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "label == %@", "旋律片段，可编辑")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["调整这个声音"].waitForExistence(timeout: 5)); capture("Note-Correction-Sheet")
+        app.buttons["完成"].tap(); app.swipeDown(); mode("专业模式", app)
         XCTAssertTrue(app.staticTexts["4/4 拍"].waitForExistence(timeout: 5)); capture("Score-Native-Professional")
     }
     func testCommunityNativeDetailAndComments() {
