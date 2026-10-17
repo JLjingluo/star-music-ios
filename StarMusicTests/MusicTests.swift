@@ -749,6 +749,9 @@ final class RevisionSafetyTests: XCTestCase {
         let before = try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path)
         XCTAssertThrowsError(try store.importPackage(truncated))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path), before)
+        var corrupted = try Data(contentsOf: archive); corrupted[corrupted.count - 2] ^= 1
+        XCTAssertThrowsError(try store.importPackage(corrupted), "One changed PCM byte must be detected even when its WAV header remains readable.")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path), before)
     }
     func testBPMReferenceAndCropMappingKeepRealTimeAndOriginalPitch() throws {
         var p = MusicProject(); p.bpm = 120
@@ -789,6 +792,12 @@ final class RevisionSafetyTests: XCTestCase {
             for pair in zip(page, page.dropFirst()) { XCTAssertGreaterThanOrEqual(layout.x(pair.1) - layout.x(pair.0), 59.9) }
             XCTAssertLessThan(layout.width, 2400)
         }
+        let crossing = [MusicNote(midi: 64, start: 3.96, duration: 0.04), MusicNote(midi: 65, start: 4.05, duration: 0.125)]
+        let crossLayout = ScoreLayout(notes: crossing), bar = crossLayout.barX(beat: 4)
+        XCTAssertGreaterThan(bar - crossLayout.x(crossing[0]), 30)
+        XCTAssertGreaterThan(crossLayout.x(crossing[1]) - bar, 30)
+        let distant = ScoreLayout(notes: [MusicNote(midi: 60, start: 0, duration: 1), MusicNote(midi: 70, start: 99999, duration: 0.5)])
+        XCTAssertTrue(distant.hasCollapsedGaps); XCTAssertLessThan(distant.width, 1200)
         let font = try XCTUnwrap(UIFont(name: "Bravura", size: 48))
         let core = CTFontCreateWithName(font.fontName as CFString, 48, nil)
         var characters: [UniChar] = [0xE050, 0xE261, 0xE262, 0xE4E3, 0xE4E4, 0xE4E5, 0xE4E6, 0xE4E7, 0xE4E8, 0xE4E9]
@@ -802,6 +811,18 @@ final class RevisionSafetyTests: XCTestCase {
         XCTAssertEqual(try ModelKeychain.read(for: a), "service-a-fixture"); XCTAssertEqual(try ModelKeychain.read(for: b), "")
         try ModelKeychain.save("service-b-fixture", for: b); try ModelKeychain.save("", for: a)
         XCTAssertEqual(try ModelKeychain.read(for: a), ""); XCTAssertEqual(try ModelKeychain.read(for: b), "service-b-fixture")
+    }
+    @MainActor func testStructuredImportBudgetRejectsBeforeAllocatingLegacyJSON() throws {
+        XCTAssertNoThrow(try StructuredImportBudget.validate(fileBytes: 10 * 1024 * 1024, availableBytes: 512 * 1024 * 1024))
+        XCTAssertThrowsError(try StructuredImportBudget.validate(fileBytes: 256 * 1024 * 1024, availableBytes: 512 * 1024 * 1024))
+        XCTAssertThrowsError(try StructuredImportBudget.validate(fileBytes: 1, availableBytes: 64 * 1024 * 1024))
+        let directory = root(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProjectStore(root: directory), project = MusicProject()
+        let url = directory.appendingPathComponent("legacy-v2.starmusic")
+        let bytes = try JSONEncoder().encode(ProjectPackage(project: project))
+        try bytes.write(to: url)
+        let imported = try store.importPackage(url)
+        XCTAssertNotEqual(imported.id, project.id); XCTAssertEqual(try Data(contentsOf: url), bytes)
     }
     func testMalformedCloudCandidatesFailBeforeAnyProjectCommit() throws {
         let bad = [

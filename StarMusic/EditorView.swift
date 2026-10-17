@@ -64,6 +64,7 @@ import UniformTypeIdentifiers
         .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: exportTask == nil ? "取消分析，保留原录音" : "取消导出", onCancel: exportTask != nil ? { cancelExport() } : analysis != nil ? { cancelAnalysis() } : nil) }
         .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
         .onChange(of: rawMode) { _, _ in addMode = false; expandedTools = false }
+        .onChange(of: session.project.tracks) { _, _ in audio.stopPlayback() }
         .onAppear { workspaceVisible = true }
         .onDisappear { workspaceVisible = false; audio.stopPlayback(); cancelAnalysis(); session.cancelAllAnalysis(); cancelExport(); if recording == nil { session.persist() } }
     }
@@ -116,7 +117,7 @@ import UniformTypeIdentifiers
                         } else {
                             MelodyCanvas(notes: session.track.notes, beats: session.project.beats, selected: session.selectedNote, addMode: addMode, onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveMelodyNote)
                         }
-                        if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : session.project.freeRhythm ? "保留原始演唱时长 · 简化参考谱，未强行量化\n问号标记建议对照原声校正" : "点击音符修改 · 上下拖动调整谱位\n问号标记建议对照原声校正").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                        if showScore { Text(addMode ? "添加模式：点击谱面空白处放置片段。" : session.project.freeRhythm ? "圆点表示音高，横线表示停顿\n按原来的节奏试听，问号提示建议校正" : "点击音符修改 · 上下拖动调整高低\n问号提示建议对照原声校正").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
     }
     private var editingTools: some View {
@@ -249,18 +250,18 @@ import UniformTypeIdentifiers
                 Button { if let midi = session.selected?.midi { Task { do { try await audio.preview(session.track.instrument, midi: midi) } catch { session.store.error = error.localizedDescription } } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.accessibilityLabel("试听这个片段")
             }.buttonStyle(.bordered)
             if standard {
-                HStack { Button("短一点") { session.editNote { $0.duration = max(0.125, $0.duration / 2) } }; Button("长一点") { session.editNote { $0.duration = min(32, $0.duration * 2) } }; Spacer(); Button("删除", role: .destructive) { session.deleteNote() } }.frame(minHeight: 44)
+                HStack { Button("短一点") { session.editNote { $0.duration = max(0.125, $0.duration / 2) } }; Button("长一点") { session.editNote { $0.duration = min(32, $0.duration * 2) } }; Spacer(); Button("删除", role: .destructive) { session.deleteNote(); noteCorrection = false } }.frame(minHeight: 44)
                 if session.selected?.confidence ?? 1 < 0.8 { Text("这一处可能没听清，可以对照录音再调整。").font(.caption).foregroundStyle(.secondary) }
                 if let note = session.selected, let url = session.store.noteRecordingURL(session.project, trackID: session.track.id, note: note) {
                     Button("听对应的原录音") { do { try audio.playOriginal(url, from: MusicEdits.originalStart(note, track: session.track, bpm: session.project.bpm), length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } }.frame(minHeight: 44)
                 }
-            } else { Button("删除这个片段", role: .destructive) { session.deleteNote() }.frame(minHeight: 44) }
+            } else { Button("删除这个片段", role: .destructive) { session.deleteNote(); noteCorrection = false }.frame(minHeight: 44) }
         }
     }
     private var professionalInspector: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let note = session.selected {
-                HStack { Text(note.pitchName).font(.headline); Text("\(note.duration, specifier: "%.2f") 拍").font(.caption).foregroundStyle(.secondary); Spacer(); Button { Task { do { if let midi = note.midi { try await audio.preview(session.track.instrument, midi: midi) } } catch { session.store.error = error.localizedDescription } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.accessibilityLabel("试听音符"); Button(role: .destructive) { audio.stopPlayback(); session.deleteNote() } label: { Image(systemName: "trash").frame(width: 44, height: 44) }.accessibilityLabel("删除音符") }
+                HStack { Text(note.pitchName).font(.headline); Text("\(note.duration, specifier: "%.2f") 拍").font(.caption).foregroundStyle(.secondary); Spacer(); Button { Task { do { if let midi = note.midi { try await audio.preview(session.track.instrument, midi: midi) } } catch { session.store.error = error.localizedDescription } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.accessibilityLabel("试听音符"); Button(role: .destructive) { audio.stopPlayback(); session.deleteNote(); noteCorrection = false } label: { Image(systemName: "trash").frame(width: 44, height: 44) }.accessibilityLabel("删除音符") }
                 HStack {
                     Picker("音高", selection: Binding(get: { session.selected?.midi ?? -1 }, set: { pitch in session.editNote { $0.midi = pitch == -1 ? nil : pitch; $0.confidence = 1 } })) { Text("休止符").tag(-1); ForEach(0...127, id: \.self) { pitch in Text(MusicNote(midi: pitch, start: 0, duration: 1).pitchName).tag(pitch) } }.pickerStyle(.menu)
                     Picker("时值", selection: Binding(get: { session.selected?.duration ?? 1 }, set: { changeDuration($0) })) { ForEach([0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4], id: \.self) { Text("\($0, specifier: "%.2f") 拍").tag($0) }; if ![0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].contains(note.duration) { Text("原始时值").tag(note.duration) } }.pickerStyle(.menu)
@@ -404,6 +405,7 @@ import UniformTypeIdentifiers
         do {
             guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
             if ["mid", "midi"].contains(url.pathExtension.lowercased()) {
+                try StructuredImportBudget.validate(url)
                 var imported = try MIDI.parse(Data(contentsOf: url)); let ratio = session.project.bpm / imported.bpm; for t in imported.tracks.indices { for n in imported.tracks[t].notes.indices { imported.tracks[t].notes[n].start *= ratio; imported.tracks[t].notes[n].duration *= ratio } }; guard let first = imported.tracks.first else { throw MusicError.invalidMIDI }
                 guard session.project.tracks.count + imported.tracks.count - 1 <= 128 else { throw MusicError.tooLarge }
                 session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { let offset = p.tracks[i].sourceStartBeat ?? 0; p.tracks[i].notes += first.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].instrument = first.instrument; p.tracks[i].recognitionSource = "MIDI 导入 · 保留实际播放时间，不吸附网格" }; p.tracks.append(contentsOf: imported.tracks.dropFirst()) }

@@ -136,7 +136,7 @@ struct ProjectPackage: Codable {
 }
 
 enum MusicError: LocalizedError {
-    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, midiCapacity, save(String), missingAudio(String), staleRevision, operation(String), unsupportedVersion(Int), projectCapacity
+    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, midiCapacity, save(String), missingAudio(String), staleRevision, operation(String), unsupportedVersion(Int), projectCapacity, importMemory
     var errorDescription: String? {
         switch self {
         case .invalidProject: "项目数据无效或超出支持范围。"
@@ -150,6 +150,7 @@ enum MusicError: LocalizedError {
         case .operation(let reason): "操作未完成：\(reason)。原有内容没有被替换。"
         case .unsupportedVersion(let version): "此工程使用较新的格式版本 \(version)，请更新 Star Music 后重新导入。"
         case .projectCapacity: "一个项目最多支持 128 条音轨和 20,000 个音符。请减少内容后重试。"
+        case .importMemory: "当前可用内存不足以安全读取此格式，原文件未修改。请释放内存后重试；较大的旧版项目备份可在内存更充足的设备上打开并导出新版备份。"
         case .staleRevision: "项目已有更新版本，本次旧结果未覆盖它。请重新打开最新草稿。"
         }
     }

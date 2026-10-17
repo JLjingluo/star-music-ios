@@ -39,6 +39,7 @@ import AVFoundation
                     notes.append(MusicNote(midi: pitch, start: Double(i) * 0.075, duration: durations[i % 4], confidence: confidence))
                 }
                 fixture.tracks[0].notes = notes
+                fixture.freeRhythm = ProcessInfo.processInfo.arguments.contains("--ui-test-free-score")
                 try save(fixture)
             }
             #endif
@@ -171,11 +172,12 @@ import AVFoundation
     }
     func discardFailedProject(_ id: UUID) {
         unsavedProjects.removeValue(forKey: id); durableRecovery.remove(id)
+        if unsavedProjects.isEmpty { recoveryMessage = nil }
         for folder in [recoveryDirectory, previousDirectory] { try? FileManager.default.removeItem(at: folder.appendingPathComponent(id.uuidString + ".json")) }
     }
     func importPackage(_ url: URL) throws -> MusicProject {
         guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 512 * 1024 * 1024 else { throw MusicError.tooLarge }
-        guard try ProjectArchive.header(from: url) != nil else { return try importPackage(Data(contentsOf: url)) }
+        guard try ProjectArchive.header(from: url) != nil else { try StructuredImportBudget.validate(url); return try importPackage(Data(contentsOf: url)) }
         let staging = root.appendingPathComponent("ImportStaging/" + UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         let header = try ProjectArchive.extract(url, to: staging)

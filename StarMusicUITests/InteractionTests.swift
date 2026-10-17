@@ -139,4 +139,18 @@ final class InteractionTests: XCTestCase {
         capture("Editor-Accessibility-Large-Type")
         back(app)
     }
+    func testFreeHummingScoreKeepsClearPitchOnlyMarksAndEditableNotes() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-appearance", "light", "--ui-test-standard-mode", "--ui-test-dense-score", "--ui-test-free-score", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let draft = app.buttons.containing(.staticText, identifier: "密集谱面回归").firstMatch
+        XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap(); mode("专业模式", app)
+        XCTAssertTrue(app.otherElements["editor.score"].waitForExistence(timeout: 5)); capture("Free-Humming-Score-Light")
+        let note = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "F3，")).firstMatch
+        if !note.isHittable { app.swipeUp() }
+        XCTAssertTrue(note.isHittable); note.tap()
+        XCTAssertTrue(app.navigationBars["音符校正"].waitForExistence(timeout: 5)); capture("Free-Score-Note-Correction")
+        app.buttons["完成"].tap()
+    }
+
 }

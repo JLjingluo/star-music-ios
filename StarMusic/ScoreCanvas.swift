@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreText
 
 /// Display spacing is independent of musical time. At most 32 notes are drawn in
 /// one page, so a dense or very long project never creates a giant backing canvas.
@@ -7,6 +8,7 @@ struct ScoreLayout {
     let firstBeat: Double
     let lastBeat: Double
     let width: CGFloat
+    let hasCollapsedGaps: Bool
     private let anchors: [(beat: Double, x: CGFloat)]
     private let positions: [UUID: CGFloat]
     static func pages(_ notes: [MusicNote]) -> [[MusicNote]] {
@@ -21,7 +23,8 @@ struct ScoreLayout {
         var points: [UUID: CGFloat] = [:], values: [(Double, CGFloat)] = [], cursor: CGFloat = 132
         var previous = firstBeat
         for onset in Set(notes.map(\.start)).sorted() {
-            cursor += max(values.isEmpty ? 0 : 60, CGFloat(onset - previous) * 44)
+            let minimum: CGFloat = values.isEmpty ? 0 : floor(onset / 4) > floor(previous / 4) ? 84 : 60
+            cursor += max(minimum, min(240, CGFloat(onset - previous) * 44))
             values.append((onset, cursor))
             // Even exact simultaneous/duplicated notes get distinct hit targets.
             let chord = notes.filter { $0.start == onset }.sorted { $0.staffPosition < $1.staffPosition }
@@ -30,9 +33,18 @@ struct ScoreLayout {
             previous = onset
         }
         anchors = values; positions = points
+        let longGap = zip(values, values.dropFirst()).contains { pair in pair.1.0 - pair.0.0 > 240.0 / 44.0 }
+        hasCollapsedGaps = longGap || lastBeat - (values.last?.0 ?? firstBeat) > 240.0 / 44.0
         width = max(640, cursor + max(80, min(240, CGFloat(lastBeat - previous) * 44)))
     }
     func x(_ note: MusicNote) -> CGFloat { positions[note.id] ?? 132 }
+    func barX(beat: Double) -> CGFloat {
+        guard let first = anchors.first else { return 103 + CGFloat(beat - firstBeat) * 44 }
+        if beat <= first.beat { return first.x - 29 }
+        let before = notes.filter { $0.start < beat }.map { x($0) }.max() ?? first.x
+        if let after = notes.filter({ $0.start >= beat }).map({ x($0) }).min() { return (before + after) / 2 }
+        return min(width - 20, before + max(48, min(220, CGFloat(beat - (anchors.last?.beat ?? firstBeat)) * 44)))
+    }
     func x(beat: Double) -> CGFloat {
         guard let first = anchors.first else { return 132 + CGFloat(beat - firstBeat) * 44 }
         if beat <= first.beat { return first.x - min(36, CGFloat(first.beat - beat) * 44) }
@@ -67,6 +79,7 @@ struct ScoreCanvas: View {
                     Button("下一页", systemImage: "chevron.right") { page = min(pages.count - 1, page + 1) }.labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(page >= pages.count - 1).accessibilityIdentifier("score.next")
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
+            if ScoreLayout(notes: visibleNotes).hasCollapsedGaps { Text("长空段已折叠 · 实际播放时间不变").font(.caption).foregroundStyle(.secondary) }
             score(visibleNotes).id(page)
         }.background(Color(red: 0.94, green: 0.93, blue: 0.89), in: RoundedRectangle(cornerRadius: 24))
             .clipShape(RoundedRectangle(cornerRadius: 24)).accessibilityElement(children: .contain).accessibilityIdentifier("editor.score")
@@ -114,11 +127,13 @@ struct ScoreCanvas: View {
         var lines = Path()
         for i in 0..<5 { let y = CGFloat(80 + i * 12); lines.move(to: CGPoint(x: 16, y: y)); lines.addLine(to: CGPoint(x: size.width - 16, y: y)) }
         context.stroke(lines, with: .color(.gray.opacity(0.7)), lineWidth: 0.8)
-        context.draw(Text("\u{E050}").font(.custom("Bravura", size: 48)).foregroundStyle(Palette.ink), at: CGPoint(x: 43, y: 105))
+        drawGlyph(0xE050, size: 48, baseline: CGPoint(x: 43, y: 116), color: Palette.ink, context: context)
         context.draw(Text("4\n4").font(.system(size: 20, weight: .semibold)).foregroundStyle(Palette.ink), at: CGPoint(x: 82, y: 103))
-        let first = Int(layout.firstBeat / 4), last = min(first + 40, Int(layout.lastBeat / 4))
-        for bar in first...last {
-            let x = bar == first ? CGFloat(103) : layout.x(beat: Double(bar) * 4) - 28
+        let first = Int(layout.firstBeat / 4)
+        var boundaries = Set(layout.notes.map { Int($0.start / 4) })
+        boundaries.insert(first); boundaries.insert(Int(layout.lastBeat / 4))
+        for bar in boundaries.sorted() {
+            let x = layout.barX(beat: Double(bar) * 4)
             guard x < size.width - 12 else { continue }
             var line = Path(); line.move(to: CGPoint(x: x, y: 80)); line.addLine(to: CGPoint(x: x, y: 128))
             context.stroke(line, with: .color(.gray), lineWidth: 0.7)
@@ -128,16 +143,21 @@ struct ScoreCanvas: View {
     private func draw(_ note: MusicNote, at p: CGPoint, accidental: String?, context: GraphicsContext) {
         let color = Palette.ink, appearance = NoteNotation(duration: freeRhythm ? 1 : note.duration)
         if note.midi == nil {
-            let glyph = [0: "\u{E4E5}", 1: "\u{E4E6}", 2: "\u{E4E7}", 3: "\u{E4E8}", 4: "\u{E4E9}"][appearance.flags] ?? "\u{E4E5}"
-            let rest = !appearance.filled ? (appearance.stem ? "\u{E4E4}" : "\u{E4E3}") : glyph
-            context.draw(Text(rest).font(.custom("Bravura", size: 48)).foregroundStyle(color), at: p)
+            if freeRhythm {
+                var pause = Path(); pause.move(to: CGPoint(x: p.x - 8, y: p.y)); pause.addLine(to: CGPoint(x: p.x + 8, y: p.y))
+                context.stroke(pause, with: .color(color.opacity(0.6)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            } else {
+                let glyph = [0: "\u{E4E5}", 1: "\u{E4E6}", 2: "\u{E4E7}", 3: "\u{E4E8}", 4: "\u{E4E9}"][appearance.flags] ?? "\u{E4E5}"
+                let rest = !appearance.filled ? (appearance.stem ? "\u{E4E4}" : "\u{E4E3}") : glyph
+                drawGlyph(rest.utf16.first!, size: 48, baseline: p, color: color, context: context)
+            }
         } else {
             if p.y > 128 { for y in stride(from: CGFloat(140), through: p.y + 2, by: 12) { ledger(x: p.x, y: y, color: color, context: context) } }
             if p.y < 80 { for y in stride(from: CGFloat(68), through: p.y - 2, by: -12) { ledger(x: p.x, y: y, color: color, context: context) } }
             let head = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10))
             if appearance.filled { context.fill(head, with: .color(color)) } else { context.stroke(head, with: .color(color), lineWidth: 1.7) }
             let down = p.y < 104
-            if appearance.stem {
+            if appearance.stem && !freeRhythm {
                 let x = p.x + (down ? -6 : 6), end = p.y + (down ? 32 : -32)
                 var stem = Path(); stem.move(to: CGPoint(x: x, y: p.y)); stem.addLine(to: CGPoint(x: x, y: end)); context.stroke(stem, with: .color(color), lineWidth: 1.5)
                 for level in 0..<appearance.flags {
@@ -146,7 +166,7 @@ struct ScoreCanvas: View {
                     context.stroke(flag, with: .color(color), lineWidth: 1.7)
                 }
             }
-            if let accidental { context.draw(Text(accidental).font(.custom("Bravura", size: 40)).foregroundStyle(color), at: CGPoint(x: p.x - 22, y: p.y)) }
+            if let accidental { drawGlyph(accidental.utf16.first!, size: 40, baseline: CGPoint(x: p.x - 22, y: p.y), color: color, context: context) }
         }
         if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: p.y - 4, width: 4, height: 4)), with: .color(color)) }
         if note.id == selected { context.stroke(Path(roundedRect: CGRect(x: p.x - 20, y: p.y - 18, width: 40, height: 36), cornerRadius: 8), with: .color(.blue), lineWidth: 2) }
@@ -155,5 +175,18 @@ struct ScoreCanvas: View {
     }
     private func ledger(x: CGFloat, y: CGFloat, color: Color, context: GraphicsContext) {
         var path = Path(); path.move(to: CGPoint(x: x - 12, y: y)); path.addLine(to: CGPoint(x: x + 12, y: y)); context.stroke(path, with: .color(color), lineWidth: 1)
+    }
+    private func drawGlyph(_ code: UniChar, size: CGFloat, baseline: CGPoint, color: Color, context: GraphicsContext) {
+        let font = CTFontCreateWithName("Bravura" as CFString, size, nil)
+        var character = code, glyph: CGGlyph = 0, advance = CGSize.zero
+        guard CTFontGetGlyphsForCharacters(font, &character, &glyph, 1), glyph != 0 else { return }
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
+        var position = CGPoint(x: -advance.width / 2, y: 0)
+        var painter = context
+        painter.withCGContext { cg in
+            cg.saveGState(); cg.translateBy(x: baseline.x, y: baseline.y); cg.scaleBy(x: 1, y: -1)
+            cg.setFillColor(UIColor(color).cgColor); cg.setTextDrawingMode(.fill)
+            CTFontDrawGlyphs(font, &glyph, &position, 1, cg); cg.restoreGState()
+        }
     }
 }

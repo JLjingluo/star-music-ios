@@ -129,13 +129,13 @@ struct RootView: View {
     private func open(_ p: MusicProject) { audio.stopPlayback(); route = ProjectRoute(project: p) }
     private func importMusic(_ url: URL) async {
         guard !importing else { store.error = "正在处理上一个文件，请完成后再导入。"; return }
-        importing = true; defer { importing = false }
+        importing = true; audio.stopPlayback(); defer { importing = false }
         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
             let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0; guard size <= (url.pathExtension.lowercased() == "starmusic" || url.pathExtension.lowercased() == "json" ? 512 : 256) * 1024 * 1024 else { throw MusicError.tooLarge }
             let ext = url.pathExtension.lowercased(); var p: MusicProject
             if ext == "starmusic" || ext == "json" { p = try store.importPackage(url) }
-            else if ext == "mid" || ext == "midi" { p = try MIDI.parse(Data(contentsOf: url)); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent); try store.save(p) }
+            else if ext == "mid" || ext == "midi" { try StructuredImportBudget.validate(url); p = try MIDI.parse(Data(contentsOf: url)); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent); try store.save(p) }
             else {
                 let prepared = try await AudioImport.prepare(url, directory: store.recordingDirectory)
                 let name = prepared.name, target = prepared.url

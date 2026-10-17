@@ -17,7 +17,13 @@ for key,value in {'buildConfiguration':'Release','preferredScreenCaptureFormat':
 launch=root.find('LaunchAction')
 if launch is not None:launch.set('buildConfiguration','Release')
 tree.write(source.with_name('StarMusicPreview.xcscheme'),encoding='UTF-8',xml_declaration=True)
-command=['xcodebuild','test','-project','StarMusic.xcodeproj','-scheme','StarMusicPreview','-configuration','Release','-destination','platform=iOS Simulator,id='+os.environ['SIMULATOR_ID'],'-derivedDataPath','build/simulator','-resultBundlePath','build/ReleasePreview.xcresult','-only-testing:StarMusicUITests/InteractionTests/testCreationSheetOpensEditorAndHidesNavigation','-only-testing:StarMusicUITests/InteractionTests/testLightAppearanceAndNativeSettingsToggle','CODE_SIGNING_ALLOWED=YES','CODE_SIGN_IDENTITY=-','-parallel-testing-enabled','NO']
+# A separate clean device keeps DEBUG regression projects out of Release home
+# captures without resetting any existing simulator's project or audio data.
+try:subprocess.run(['xcrun','simctl','shutdown',os.environ['SIMULATOR_ID']],check=False,timeout=45)
+except subprocess.TimeoutExpired:print('Previous test device shutdown timed out; requesting a separate preview device.',flush=True)
+preview_device=subprocess.check_output(['xcrun','simctl','create','Star Music Release Preview','com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro','com.apple.CoreSimulator.SimRuntime.iOS-26-2'],text=True,timeout=60).strip()
+assert preview_device,'No native preview device was created'
+command=['xcodebuild','test','-project','StarMusic.xcodeproj','-scheme','StarMusicPreview','-configuration','Release','-destination','platform=iOS Simulator,id='+preview_device,'-derivedDataPath','build/simulator','-resultBundlePath','build/ReleasePreview.xcresult','-only-testing:StarMusicUITests/InteractionTests/testCreationSheetOpensEditorAndHidesNavigation','-only-testing:StarMusicUITests/InteractionTests/testLightAppearanceAndNativeSettingsToggle','CODE_SIGNING_ALLOWED=YES','CODE_SIGN_IDENTITY=-','-parallel-testing-enabled','NO']
 # XCTest manages boot/install/launch; avoid the standalone simctl service failures on this image.
 captures=out/'release-ui'
 try:
