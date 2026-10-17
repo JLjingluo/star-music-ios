@@ -1,6 +1,28 @@
 import SwiftUI
 import CoreText
 
+struct ScoreSymbolGeometry {
+    let head: CGRect
+    let stem: Path?
+    let flags: [Path]
+    let correction: CGPoint
+    init(point p: CGPoint, flagCount: Int, showStem: Bool) {
+        head = CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10)
+        correction = CGPoint(x: p.x + 34, y: p.y - 22)
+        guard showStem else { stem = nil; flags = []; return }
+        let down = p.y < 104
+        let length = CGFloat(max(34, flagCount * 7 + 20))
+        let x = p.x + (down ? -6 : 6), end = p.y + (down ? length : -length)
+        var line = Path(); line.move(to: CGPoint(x: x, y: p.y)); line.addLine(to: CGPoint(x: x, y: end)); stem = line
+        flags = (0..<flagCount).map { level in
+            let top = end + CGFloat(level) * (down ? -7 : 7)
+            var flag = Path(); flag.move(to: CGPoint(x: x, y: top))
+            flag.addQuadCurve(to: CGPoint(x: x + 2, y: top + (down ? -20 : 20)), control: CGPoint(x: x + 17, y: top + (down ? -10 : 10)))
+            return flag
+        }
+    }
+}
+
 /// Display spacing is independent of musical time. At most 32 notes are drawn in
 /// one page, so a dense or very long project never creates a giant backing canvas.
 struct ScoreLayout {
@@ -113,7 +135,7 @@ struct ScoreCanvas: View {
                     })
                 }
                 ForEach(notes) { note in
-                    Button { onSelect(note.id) } label: { Color.clear.frame(width: 44, height: 44).contentShape(Rectangle()) }
+                    Button { onSelect(note.id) } label: { Color.clear.frame(width: 84, height: 72).contentShape(Rectangle()) }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(note.pitchName)，第 \(Int(note.start / 4) + 1) 小节，\(note.duration.formatted()) 拍" + (note.confidence < 0.8 ? "，建议校正" : ""))
                         .accessibilitySortPriority(-note.start)
@@ -146,6 +168,7 @@ struct ScoreCanvas: View {
     }
     private func draw(_ note: MusicNote, at p: CGPoint, accidental: String?, context: GraphicsContext) {
         let color = Palette.ink, appearance = NoteNotation(duration: freeRhythm ? 1 : note.duration)
+        let ink = ScoreSymbolGeometry(point: p, flagCount: appearance.flags, showStem: appearance.stem && !freeRhythm)
         if note.midi == nil {
             if freeRhythm {
                 var pause = Path(); pause.move(to: CGPoint(x: p.x - 8, y: p.y)); pause.addLine(to: CGPoint(x: p.x + 8, y: p.y))
@@ -158,23 +181,17 @@ struct ScoreCanvas: View {
         } else {
             if p.y > 128 { for y in stride(from: CGFloat(140), through: p.y + 2, by: 12) { ledger(x: p.x, y: y, color: color, context: context) } }
             if p.y < 80 { for y in stride(from: CGFloat(68), through: p.y - 2, by: -12) { ledger(x: p.x, y: y, color: color, context: context) } }
-            let head = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10))
+            let head = Path(ellipseIn: ink.head)
             if appearance.filled { context.fill(head, with: .color(color)) } else { context.stroke(head, with: .color(color), lineWidth: 1.7) }
-            let down = p.y < 104
-            if appearance.stem && !freeRhythm {
-                let x = p.x + (down ? -6 : 6), end = p.y + (down ? 32 : -32)
-                var stem = Path(); stem.move(to: CGPoint(x: x, y: p.y)); stem.addLine(to: CGPoint(x: x, y: end)); context.stroke(stem, with: .color(color), lineWidth: 1.5)
-                for level in 0..<appearance.flags {
-                    let top = end + CGFloat(level) * (down ? -7 : 7)
-                    var flag = Path(); flag.move(to: CGPoint(x: x, y: top)); flag.addQuadCurve(to: CGPoint(x: x + 2, y: top + (down ? -20 : 20)), control: CGPoint(x: x + 17, y: top + (down ? -10 : 10)))
-                    context.stroke(flag, with: .color(color), lineWidth: 1.7)
-                }
+            if let stem = ink.stem {
+                context.stroke(stem, with: .color(color), lineWidth: 1.5)
+                for flag in ink.flags { context.stroke(flag, with: .color(color), lineWidth: 1.7) }
             }
             if let accidental { drawGlyph(accidental.utf16.first!, size: 40, baseline: CGPoint(x: p.x - 22, y: p.y), color: color, context: context) }
         }
         if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: p.y - 4, width: 4, height: 4)), with: .color(color)) }
         if note.id == selected { context.stroke(Path(roundedRect: CGRect(x: p.x - 20, y: p.y - 18, width: 40, height: 36), cornerRadius: 8), with: .color(.blue), lineWidth: 2) }
-        if note.confidence < 0.8 { context.draw(Text(Image(systemName: "questionmark.circle.fill")).font(.system(size: 13)).foregroundStyle(Color(red: 0.54, green: 0.38, blue: 0.02)), at: CGPoint(x: p.x, y: p.y - 50)) }
+        if note.confidence < 0.8 { context.draw(Text(Image(systemName: "questionmark.circle.fill")).font(.system(size: 13)).foregroundStyle(Color(red: 0.54, green: 0.38, blue: 0.02)), at: ink.correction) }
         if note.tied { var tie = Path(); tie.move(to: CGPoint(x: p.x + 8, y: p.y + 12)); tie.addQuadCurve(to: CGPoint(x: p.x + 38, y: p.y + 12), control: CGPoint(x: p.x + 23, y: p.y + 26)); context.stroke(tie, with: .color(color), lineWidth: 1.4) }
     }
     private func ledger(x: CGFloat, y: CGFloat, color: Color, context: GraphicsContext) {

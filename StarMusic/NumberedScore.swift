@@ -50,6 +50,7 @@ struct NumberedScoreView: View {
         let pitches = visible.map { NumberedPitch(midi: $0.midi, key: key) }
         let above = max(12, CGFloat(pitches.map(\.octave).max() ?? 0) * 8)
         let below = max(12, CGFloat(-(pitches.map(\.octave).min() ?? 0)) * 8)
+        let rhythmHeight = CGFloat(visible.map { NumberedRhythm(duration: $0.duration, free: free).flags }.max() ?? 0) * 3
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("1 = \(key)").font(.headline)
@@ -63,7 +64,7 @@ struct NumberedScoreView: View {
             if visible.isEmpty { Text("添加声音或录唱后，旋律会显示成简谱。").foregroundStyle(.secondary) }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 16)], spacing: 20) {
                 ForEach(visible) { note in
-                    Button { onSelect(note.id) } label: { numberedCell(note, above: above, below: below) }.buttonStyle(.plain)
+                    Button { onSelect(note.id) } label: { numberedCell(note, above: above, below: below, rhythmHeight: rhythmHeight) }.buttonStyle(.plain)
                         .accessibilityLabel("\(note.pitchName)，简谱 \(NumberedPitch(midi: note.midi, key: key).plain)，从 \((note.start * 60 / bpm).formatted()) 秒开始，持续 \((note.duration * 60 / bpm).formatted()) 秒")
                         .accessibilityIdentifier("numbered.note.\(note.id)")
                 }
@@ -74,7 +75,7 @@ struct NumberedScoreView: View {
             .foregroundStyle(Palette.ink).accessibilityElement(children: .contain).accessibilityIdentifier("editor.numberedScore")
             .onChange(of: notes.count) { _, _ in page = min(page, pages.count - 1) }
     }
-    private func numberedCell(_ note: MusicNote, above: CGFloat, below: CGFloat) -> some View {
+    private func numberedCell(_ note: MusicNote, above: CGFloat, below: CGFloat, rhythmHeight: CGFloat) -> some View {
         let pitch = NumberedPitch(midi: note.midi, key: key)
         let style = NumberedRhythm(duration: note.duration, free: free)
         return VStack(spacing: 3) {
@@ -85,8 +86,8 @@ struct NumberedScoreView: View {
                     if style.dotted { Text("·").font(.system(size: 20)).offset(x: 12) }
                     if style.dashes > 0 { Text(String(repeating: "—", count: style.dashes)).font(.system(size: 10)).offset(x: 44) }
                 }
+            if rhythmHeight > 0 { VStack(spacing: 2) { ForEach(0..<style.flags, id: \.self) { _ in Rectangle().frame(width: 24, height: 1) } }.frame(height: rhythmHeight, alignment: .top) }
             Text(String(repeating: "•\n", count: max(0, -pitch.octave)).trimmingCharacters(in: .newlines)).font(.system(size: 8)).lineSpacing(-2).frame(height: below, alignment: .top)
-            if !free { VStack(spacing: 2) { ForEach(0..<style.flags, id: \.self) { _ in Rectangle().frame(width: 24, height: 1) } }.frame(height: 12, alignment: .top) }
             Text(free ? String(format: "%.2fs · %.2fs", note.start * 60 / bpm, note.duration * 60 / bpm) : String(format: "%.3g 拍", note.duration)).font(.caption2).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
             if note.confidence < 0.8 { Image(systemName: "questionmark.circle").font(.caption) } else { Color.clear.frame(height: 14) }
         }.frame(maxWidth: .infinity).padding(.vertical, 8)
@@ -141,11 +142,11 @@ enum NumberedScoreExport {
                     if pitch.sharp { label("♯", x: x + 8, y: y + 32, size: 18) }
                     if style.dotted { label("·", x: x + 42, y: y + 30, size: 20) }
                     for dot in 0..<abs(pitch.octave) {
-                        let dotY = pitch.octave > 0 ? y + 23 - CGFloat(dot) * 5 : y + 60 + CGFloat(dot) * 5
+                        let dotY = pitch.octave > 0 ? y + 23 - CGFloat(dot) * 5 : y + 62 + CGFloat(style.flags) * 3 + CGFloat(dot) * 5
                         context.cgContext.fillEllipse(in: CGRect(x: x + 30, y: dotY, width: 2.5, height: 2.5))
                     }
                     if !project.freeRhythm {
-                        for line in 0..<style.flags { context.cgContext.fill(CGRect(x: x + 24, y: y + 90 + CGFloat(line) * 3, width: 25, height: 0.7)) }
+                        for line in 0..<style.flags { context.cgContext.fill(CGRect(x: x + 24, y: y + 58 + CGFloat(line) * 3, width: 25, height: 0.7)) }
                         if style.dashes > 0 { label(String(repeating: "—", count: style.dashes), x: x + 49, y: y + 36, size: 10) }
                     }
                     if note.tied { label("⌒", x: x + 58, y: y + 12, size: 12) }

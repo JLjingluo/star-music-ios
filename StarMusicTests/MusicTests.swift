@@ -3,6 +3,7 @@ import AVFoundation
 import UIKit
 import CoreText
 import PDFKit
+import SwiftUI
 @testable import StarMusic
 
 final class MusicTests: XCTestCase {
@@ -783,6 +784,21 @@ final class RevisionSafetyTests: XCTestCase {
         XCTAssertThrowsError(try AudioRenderer.file(p, recordingDirectory: root))
         try AudioRenderer.pcmWAV([], rate: 48000).write(to: root.appendingPathComponent("take.wav"))
         XCTAssertThrowsError(try AudioRenderer.file(p, recordingDirectory: root), "An empty original must be an explicit failure, not silent successful audio.")
+    }
+    func testDenseFlagsAndCorrectionMarkersClearTheirOwnNotehead() {
+        let heights: [CGFloat] = [80, 128, 164]
+        for y in heights {
+            for count in 1...4 {
+                let ink = ScoreSymbolGeometry(point: CGPoint(x: 132, y: y), flagCount: count, showStem: true)
+                let marker = CGRect(x: ink.correction.x - 6.5, y: ink.correction.y - 6.5, width: 13, height: 13)
+                XCTAssertFalse(marker.intersects(ink.head))
+                for flag in ink.flags {
+                    let drawn = flag.boundingRect.insetBy(dx: -0.85, dy: -0.85)
+                    XCTAssertFalse(drawn.intersects(ink.head), "Multiple flags need a longer stem to avoid curling into their own notehead.")
+                    XCTAssertFalse(drawn.intersects(marker))
+                }
+            }
+        }
     }
     func testDenseScoreSpacingPaginationAndFontGlyphCoverage() throws {
         let notes = (0..<20000).map { MusicNote(midi: 60 + $0 % 12, start: Double($0) * 0.02, duration: 0.03) }

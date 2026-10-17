@@ -167,9 +167,14 @@ final class InteractionTests: XCTestCase {
         note.tap(); XCTAssertTrue(app.navigationBars["调整这个片段"].waitForExistence(timeout: 5))
         app.buttons["高一点"].tap(); app.buttons["完成"].tap()
         XCTAssertNotEqual(app.buttons[id].label, original)
-        let add = app.buttons["editor.addNote"]
-        for _ in 0..<3 where !add.isHittable { app.swipeUp() }
-        XCTAssertTrue(add.isHittable); add.tap()
+        // XCTest can call a clipped control below safeAreaInset hittable.
+        // Scroll as a user would, then verify its entire frame clears transport.
+        app.swipeUp()
+        let add = app.buttons["editor.addNote"], transport = app.buttons["editor.keyShift"]
+        for _ in 0..<3 where add.frame.maxY > transport.frame.minY { app.swipeUp() }
+        XCTAssertTrue(add.isHittable)
+        XCTAssertLessThanOrEqual(add.frame.maxY, transport.frame.minY + 1)
+        add.tap()
         XCTAssertTrue(app.navigationBars["添加一个声音"].waitForExistence(timeout: 5))
         app.buttons["noteEntry.add"].tap()
         XCTAssertTrue(app.otherElements["editor.numberedScore"].waitForExistence(timeout: 5))
