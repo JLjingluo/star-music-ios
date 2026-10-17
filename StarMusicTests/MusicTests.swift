@@ -858,10 +858,22 @@ final class NumberedNotationTests: XCTestCase {
         XCTAssertEqual(NumberedPitch(midi: 59, key: "C").plain, "7,")
         XCTAssertEqual(NumberedPitch(midi: 72, key: "C").plain, "1'")
         XCTAssertEqual(NumberedPitch(midi: nil, key: "C").text, "0")
+        XCTAssertEqual(NumberedRhythm(duration: 0.25, free: false).flags, 2)
+        XCTAssertEqual(NumberedRhythm(duration: 3, free: false).dashes, 2)
+        XCTAssertFalse(NumberedRhythm(duration: 3, free: false).dotted)
+        XCTAssertEqual(NumberedRhythm(duration: 0.03125, free: false).flags, 0)
+        XCTAssertEqual(NumberedRhythm(duration: 8, free: false).dashes, 0)
+        XCTAssertEqual(NumberedRhythm(duration: 0.25, free: true).flags, 0)
     }
     func testNumberedPDFPaginatesAndTextRetainsActualTimesWithoutChangingProject() throws {
         var p = MusicProject(); p.name = "简谱导出回归"; p.bpm = 120; p.freeRhythm = true
-        p.tracks[0].notes = (0..<26).map { MusicNote(midi: $0 == 0 ? nil : 60 + $0 % 12, start: Double($0) * 0.123, duration: 0.1875) }
+        var notes: [MusicNote] = []
+        for i in 0..<26 {
+            let pitch: Int? = i == 0 ? nil : 60 + i % 12
+            let start = Double(i) * 0.123
+            notes.append(MusicNote(midi: pitch, start: start, duration: 0.1875))
+        }
+        p.tracks[0].notes = notes
         let before = p
         let text = NumberedScoreExport.text(p)
         XCTAssertTrue(text.contains("1 = C")); XCTAssertTrue(text.contains("0.0615")); XCTAssertTrue(text.contains("0.0938"))

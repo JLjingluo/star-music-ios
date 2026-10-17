@@ -25,6 +25,21 @@ struct NumberedPitch: Equatable {
     var text: String { (sharp ? "♯" : "") + String(digit) }
     var plain: String { text + String(repeating: "'", count: max(0, octave)) + String(repeating: ",", count: max(0, -octave)) }
 }
+struct NumberedRhythm {
+    let flags: Int
+    let dotted: Bool
+    let dashes: Int
+    init(duration: Double, free: Bool) {
+        let bases: [Double] = [0.0625, 0.125, 0.25, 0.5, 1]
+        let exact = bases.contains { abs(duration - $0) < 0.000001 || abs(duration - $0 * 1.5) < 0.000001 }
+        let notation = NoteNotation(duration: duration)
+        flags = !free && exact ? notation.flags : 0
+        dotted = !free && exact && notation.dotted
+        // 2/3/4 beats use one/two/three extension dashes. Unrepresentable or
+        // very long durations keep their explicit time rather than fake flags.
+        dashes = !free && (2...4).contains(duration) && abs(duration.rounded() - duration) < 0.000001 ? Int(duration) - 1 : 0
+    }
+}
 struct NumberedScoreView: View {
     var notes: [MusicNote]; var key: String; var bpm: Double; var free: Bool; var selected: UUID?
     var onSelect: (UUID) -> Void
@@ -58,10 +73,10 @@ struct NumberedScoreView: View {
     }
     private func numberedCell(_ note: MusicNote) -> some View {
         let pitch = NumberedPitch(midi: note.midi, key: key)
-        let style = NoteNotation(duration: note.duration)
+        let style = NumberedRhythm(duration: note.duration, free: free)
         return VStack(spacing: 3) {
             Text(String(repeating: "•\n", count: max(0, pitch.octave)).trimmingCharacters(in: .newlines)).font(.system(size: 8)).lineSpacing(-2).frame(height: 48, alignment: .bottom)
-            HStack(spacing: 2) { Text(pitch.text).font(.system(size: 26, weight: .medium)); if !free && style.dotted { Text("·").font(.title2) } }
+            HStack(spacing: 2) { Text(pitch.text).font(.system(size: 26, weight: .medium)); if style.dotted { Text("·").font(.title2) }; if style.dashes > 0 { Text(String(repeating: "—", count: style.dashes)).font(.system(size: 10)) } }
             Text(String(repeating: "•\n", count: max(0, -pitch.octave)).trimmingCharacters(in: .newlines)).font(.system(size: 8)).lineSpacing(-2).frame(height: 48, alignment: .top)
             if !free { VStack(spacing: 2) { ForEach(0..<style.flags, id: \.self) { _ in Rectangle().frame(width: 24, height: 1) } }.frame(height: 12, alignment: .top) }
             Text(free ? String(format: "%.2fs · %.2fs", note.start * 60 / bpm, note.duration * 60 / bpm) : String(format: "%.3g 拍", note.duration)).font(.caption2).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
@@ -112,7 +127,7 @@ enum NumberedScoreExport {
                     let offset = index % 25
                     if offset == 0 && index > 0 { begin(track) }
                     let x = 42 + CGFloat(offset % 5) * 103, y = 166 + CGFloat(offset / 5) * 124
-                    let pitch = NumberedPitch(midi: note.midi, key: project.key), style = NoteNotation(duration: note.duration)
+                    let pitch = NumberedPitch(midi: note.midi, key: project.key), style = NumberedRhythm(duration: note.duration, free: project.freeRhythm)
                     label("\(Int(note.start / 4) + 1)", x: x, y: y, size: 8, color: .gray)
                     label(pitch.text + (!project.freeRhythm && style.dotted ? " ·" : ""), x: x + 24, y: y + 28, size: 24)
                     for dot in 0..<abs(pitch.octave) {
@@ -121,7 +136,7 @@ enum NumberedScoreExport {
                     }
                     if !project.freeRhythm {
                         for line in 0..<style.flags { context.cgContext.fill(CGRect(x: x + 24, y: y + 90 + CGFloat(line) * 3, width: 25, height: 0.7)) }
-                        if note.duration >= 2 { label(note.duration >= 4 ? "— — —" : "—", x: x + 43, y: y + 36, size: 10) }
+                        if style.dashes > 0 { label(String(repeating: "—", count: style.dashes), x: x + 49, y: y + 36, size: 10) }
                     }
                     if note.tied { label("⌒", x: x + 58, y: y + 12, size: 12) }
                     let timing = project.freeRhythm ? String(format: "%.2f / %.2f s", note.start * 60 / project.bpm, note.duration * 60 / project.bpm) : String(format: "%.3g / %.3g 拍", note.start, note.duration)
