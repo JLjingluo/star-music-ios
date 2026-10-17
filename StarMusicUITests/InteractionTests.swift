@@ -125,9 +125,9 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(tools.isHittable); XCTAssertTrue(key.isHittable)
         XCTAssertLessThanOrEqual(tools.frame.maxY, key.frame.minY + 1, "Scrollable editing tools must stop above the pinned transport.")
         capture("Editor-Bottom-No-Overlap")
-        UIDevice.current.orientation = .landscapeLeft
+        XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(key.waitForExistence(timeout: 5)); capture("Dense-Score-Landscape")
-        UIDevice.current.orientation = .portrait
+        XCUIDevice.shared.orientation = .portrait
     }
     func testLargeTypeEditorKeepsExplicitToolsAndPlaybackReachable() {
         let app = XCUIApplication()
