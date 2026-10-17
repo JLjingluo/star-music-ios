@@ -244,6 +244,8 @@ enum AudioRenderer {
         let root = recordingDirectory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("StarMusic/Recordings", isDirectory: true)
         for track in tracks where track.useOriginalAudio == true {
             guard let name = track.recordingFile, FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) else { throw MusicError.missingAudio(track.recordingFile ?? track.name) }
+            let asset = try AVAudioFile(forReading: root.appendingPathComponent(name))
+            guard asset.length > 0, track.sourceDuration > 0 else { throw MusicError.operation("原声为空或未能完整结束，请保留文件并重新录制或恢复备份") }
         }
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         FileManager.default.createFile(atPath: output.path, contents: nil)
@@ -292,7 +294,7 @@ enum AudioRenderer {
             let pcm = try encodePCM(mix, rate: 44100, cancellable: true)
             try handle.write(contentsOf: pcm.dropFirst(44))
         }
-        try handle.synchronize(); try handle.close(); complete = true; return output
+        try handle.synchronize(); try handle.close(); try Task.checkCancellation(); complete = true; return output
     }
     static func pcmWAV(_ samples: [Float], rate: UInt32) -> Data {
         // Encoding small analysis/metronome buffers has no asynchronous job to cancel.

@@ -777,6 +777,8 @@ final class RevisionSafetyTests: XCTestCase {
         XCTAssertEqual(decoded.samples[51200], 0, accuracy: 0.001)
         try FileManager.default.removeItem(at: root.appendingPathComponent("take.wav"))
         XCTAssertThrowsError(try AudioRenderer.file(p, recordingDirectory: root))
+        try AudioRenderer.pcmWAV([], rate: 48000).write(to: root.appendingPathComponent("take.wav"))
+        XCTAssertThrowsError(try AudioRenderer.file(p, recordingDirectory: root), "An empty original must be an explicit failure, not silent successful audio.")
     }
     func testDenseScoreSpacingPaginationAndFontGlyphCoverage() throws {
         let notes = (0..<20000).map { MusicNote(midi: 60 + $0 % 12, start: Double($0) * 0.02, duration: 0.03) }

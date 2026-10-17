@@ -31,7 +31,14 @@ import AVFoundation
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--ui-test-dense-score") {
                 var fixture = MusicProject(); fixture.id = UUID(uuidString: "00000000-0000-4000-8000-000000000070")!; fixture.name = "密集谱面回归"; fixture.bpm = 96
-                fixture.tracks[0].notes = (0..<40).map { i in MusicNote(midi: i % 9 == 0 ? nil : 52 + i % 13, start: Double(i) * 0.075, duration: [0.0625, 0.125, 0.25, 0.5][i % 4], confidence: i % 4 == 0 ? 0.6 : 1) }
+                var notes: [MusicNote] = []
+                let durations: [Double] = [0.0625, 0.125, 0.25, 0.5]
+                for i in 0..<40 {
+                    let pitch: Int? = i % 9 == 0 ? nil : 52 + i % 13
+                    let confidence: Double = i % 4 == 0 ? 0.6 : 1
+                    notes.append(MusicNote(midi: pitch, start: Double(i) * 0.075, duration: durations[i % 4], confidence: confidence))
+                }
+                fixture.tracks[0].notes = notes
                 try save(fixture)
             }
             #endif
@@ -58,17 +65,17 @@ import AVFoundation
         }
         projects = valid.sorted { $0.updated > $1.updated }
         if !durableRecovery.isEmpty { recoveryMessage = "已找回 \(durableRecovery.count) 个未完成保存的草稿。打开后可继续编辑并重试保存。" }
-        let missing = valid.filter { !$0.audioFiles.allSatisfy { FileManager.default.fileExists(atPath: recordingDirectory.appendingPathComponent($0).path) } }
-        if !missing.isEmpty { error = "\(missing.count) 个草稿缺少原声附件。工程仍保留；请从完整备份恢复录音。" }
+        let missing = valid.filter { (try? verifyAudio($0)) == nil }
+        if !missing.isEmpty { error = "\(missing.count) 个草稿的原声附件缺失或不完整。工程与原文件仍保留；请从完整备份恢复录音。" }
         if rejected > 0 { error = "有 \(rejected) 个草稿暂时无法读取；原文件仍保留在应用文件夹中。" }
     }
-    @discardableResult func save(_ snapshot: MusicProject, expectedRevision: Int? = nil) throws -> MusicProject {
+    @discardableResult func save(_ snapshot: MusicProject, expectedRevision: Int? = nil, openRecording: String? = nil) throws -> MusicProject {
         var project = snapshot.migratingLegacyRecording(); restoreRecordingDuration(&project)
         try project.validate()
         let current = projects.first { $0.id == project.id }
         if let expectedRevision, expectedRevision != (current?.revision ?? 0) { throw MusicError.staleRevision }
         var dependencyFailure: Error?
-        do { try verifyAudio(project) } catch { dependencyFailure = error }
+        do { try verifyAudio(project, openRecording: openRecording) } catch { dependencyFailure = error }
         project.revision = max(current?.revision ?? 0, unsavedProjects[project.id]?.revision ?? 0) + 1
         let data = try encoder.encode(project)
         let name = project.id.uuidString + ".json", primary = projectDirectory.appendingPathComponent(name)
@@ -90,11 +97,14 @@ import AVFoundation
         projects.sort { $0.updated > $1.updated }
         return project
     }
-    func verifyAudio(_ project: MusicProject) throws {
+    func verifyAudio(_ project: MusicProject, openRecording: String? = nil) throws {
         var total: Int64 = 0
         for file in project.audioFiles {
             let url = recordingDirectory.appendingPathComponent(file)
             guard FileManager.default.fileExists(atPath: url.path) else { throw MusicError.missingAudio(file) }
+            if file != openRecording {
+                guard let audio = try? AVAudioFile(forReading: url), audio.length > 0 else { throw MusicError.operation("原声附件不完整：\(file)。请保留原文件并从备份恢复") }
+            }
             total += Int64((try url.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0)
             guard total <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
         }

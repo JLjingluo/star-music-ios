@@ -21,7 +21,11 @@ struct RecognitionSettings: Codable, Equatable {
         guard let data = UserDefaults.standard.data(forKey: "recognitionSettings"), let settings = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
         return settings
     }
-    func save() throws { UserDefaults.standard.set(try JSONEncoder().encode(self), forKey: "recognitionSettings") }
+    func save() throws {
+        let previous = Self.load()
+        if (try? previous.endpoint()) != nil, (try? previous.endpoint()) != (try? endpoint()) { _ = try ModelKeychain.read(for: previous) }
+        UserDefaults.standard.set(try JSONEncoder().encode(self), forKey: "recognitionSettings")
+    }
     func endpoint() throws -> URL {
         guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)), components.scheme == "https", components.host != nil,
               components.user == nil, components.password == nil, components.query == nil, components.fragment == nil else { throw RecognitionError.configuration("请输入不带密钥的 HTTPS API 基础地址。") }
@@ -72,7 +76,10 @@ enum ModelKeychain {
         }
         return ""
     }
-    static func save(_ value: String, for settings: RecognitionSettings) throws { try save(value, query: scopedQuery(settings)) }
+    static func save(_ value: String, for settings: RecognitionSettings) throws {
+        try save(value, query: scopedQuery(settings))
+        if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, (try? settings.endpoint()) == (try? RecognitionSettings.load().endpoint()) { try save("") }
+    }
     static func read() throws -> String { try read(query: query) }
     private static func read(query: [String: Any]) throws -> String {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -100,6 +107,7 @@ struct RecognitionSettingsView: View {
     @State private var key = ""
     @State private var status = ""
     @State private var checking = false
+    @State private var checkTask: Task<Void, Never>?
     var body: some View {
         Form {
             Section("识谱引擎") {
@@ -120,7 +128,8 @@ struct RecognitionSettingsView: View {
                 TextField("模型 ID / 推理接入点 ID", text: $settings.model).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("model.identifier")
                 SecureField("API Key", text: $key).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Text("使用方舟控制台中支持音频输入的模型或接入点 ID；不预设未核验的型号。其他平台须支持 messages 的 input_audio（WAV / Base64）。文字模型无法读取哼唱。").font(.caption).foregroundStyle(.secondary)
-                Button(checking ? "正在检查连接…" : "检查连接") { Task { await check() } }.disabled(checking)
+                Button(checking ? "正在检查连接…" : "检查连接") { guard !checking else { return }; checking = true; checkTask = Task { await check() } }.disabled(checking)
+                if checking { Button("取消检查", role: .cancel) { checkTask?.cancel(); checkTask = nil; checking = false; status = "已取消检查" } }
                 if !status.isEmpty { Text(status).font(.caption).accessibilityLabel(status) }
             }
             Section {
@@ -128,17 +137,22 @@ struct RecognitionSettingsView: View {
                 Button("删除设备上的密钥", role: .destructive) { do { try ModelKeychain.save("", for: settings); key = ""; status = "设备密钥已删除" } catch { status = error.localizedDescription } }
             }
         }.navigationTitle("识谱与我的模型")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("保存") { save() }.accessibilityIdentifier("model.save") } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("保存") { save() }.disabled(checking).accessibilityIdentifier("model.save") } }
             .task { do { key = try ModelKeychain.read(for: settings) } catch { status = error.localizedDescription } }
+            .onDisappear { checkTask?.cancel() }
     }
     private func save() {
         do { if settings.engine == .cloud { _ = try settings.endpoint(); guard !settings.model.isEmpty, !key.isEmpty else { throw RecognitionError.configuration("请填写支持音频的模型 ID 和密钥。") } }; if (try? settings.endpoint()) != nil { try ModelKeychain.save(key, for: settings) }; try settings.save(); dismiss() }
         catch { status = error.localizedDescription }
     }
     private func check() async {
-        checking = true; defer { checking = false }
-        do { try await CloudRecognitionClient.check(settings: settings, key: key); status = "地址、鉴权与模型访问已通过文字请求检查。音频输入：未验证；旋律识别：未验证。" }
-        catch { status = error.localizedDescription }
+        let snapshot = settings, secret = key
+        defer { if !Task.isCancelled { checking = false; checkTask = nil } }
+        do {
+            try await CloudRecognitionClient.check(settings: snapshot, key: secret)
+            guard !Task.isCancelled else { return }
+            status = settings == snapshot && key == secret ? "地址、鉴权与模型访问已通过文字请求检查。音频输入：未验证；旋律识别：未验证。" : "配置已更改，请重新检查当前地址与模型。"
+        } catch { if !Task.isCancelled { status = settings == snapshot && key == secret ? error.localizedDescription : "配置已更改，请重新检查。" } }
     }
 }
 

@@ -142,6 +142,9 @@ struct RootView: View {
                 p = MusicProject(); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent)
                 MusicEdits.attachOriginal(&p.tracks[0], file: name, duration: prepared.duration); p.freeRhythm = true; p.syncLegacyRecording()
                 do { try store.save(p) } catch { open(p); throw error }
+                if RecognitionSettings.load().engine == .cloud {
+                    open(p); store.error = "原声已保存在本机，尚未上传。请在编辑器中主动选择发送并生成乐谱。"; return
+                }
                 do { let recognized = try await RecognitionService.analyze(url: target, bpm: p.bpm, free: true); p.tracks[0].notes = recognized.notes.map { var note = $0; note.sourceFile = name; return note }; p.tracks[0].useOriginalAudio = false; p.tracks[0].transcript = recognized.transcript; p.tracks[0].recognitionSource = RecognitionSettings.load().engine.title }
                 catch { store.error = "原始音频已保存，可在编辑器中重试分析或手动写谱。" }
                 try store.save(p)

@@ -36,7 +36,7 @@ struct TrackControlCard: View {
                     if hasSource {
                         Button("试听此轨原声", action: onPlaySource)
                         Button("重新识谱所选原声", action: onAnalyze)
-                        Button("用我的模型识别歌词 / 口述", action: onSpeech)
+                        Button("发送原声并识别歌词 / 口述", action: onSpeech)
                         if let history = track.sourceHistory, !history.isEmpty { Menu("历史原声") { ForEach(Array(history.enumerated()), id: \.offset) { index, file in Button("录音版本 \(index + 1)") { onPlayHistory(file) } } } }
                     }
                     Button("删除音轨", role: .destructive) { confirmDelete = true }.disabled(!canDelete)

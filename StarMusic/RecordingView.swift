@@ -41,11 +41,11 @@ import SwiftUI
                     Text(musicTime(audio.elapsed)).font(.system(.largeTitle, design: .monospaced).weight(.light)).monospacedDigit().accessibilityLabel("录音时长 \(Int(audio.elapsed)) 秒")
                     Label(statusText, systemImage: audio.recordingState == .recording ? "record.circle" : "mic").font(.caption).foregroundStyle(audio.recordingState == .recording ? Color(red: 0.89, green: 0.58, blue: 0.53) : Color.secondary)
                     Waveform(levels: audio.levels).frame(height: 125).musicCard(radius: 28)
-                    if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() } else if RecognitionSettings.load().engine == .cloud { Text("主动识别会把录音发送到你配置的模型服务。").font(.caption).foregroundStyle(.secondary) }
+                    if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() } else if RecognitionSettings.load().engine == .cloud { Text("点击发送并生成乐谱，将把本段录音发送到 \((try? RecognitionSettings.load().endpoint().host) ?? "你配置的模型服务")，可能产生费用。").font(.caption).foregroundStyle(.secondary) }
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
-                        Button { guard !beginning else { return }; beginTask = Task { await begin() } } label: { Label(beginning ? "准备麦克风…" : "开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true, prominentTint: .red).disabled(beginning).accessibilityIdentifier("recording.start")
+                        Button { guard !beginning else { return }; beginning = true; beginTask = Task { await begin() } } label: { Label(beginning ? "准备麦克风…" : "开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true, prominentTint: .red).disabled(beginning).accessibilityIdentifier("recording.start")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.musicAction().frame(minHeight: 44)
@@ -94,7 +94,7 @@ import SwiftUI
     }
     private var statusText: String { switch audio.recordingState { case .ready: "首次录音会请求麦克风授权"; case .recording: "正在录音"; case .paused: "已暂停 · 原始录音保留"; case .finished: "录制已结束 · 原声保留" } }
     private func begin() async {
-        guard !beginning else { return }; beginning = true; defer { beginning = false; beginTask = nil }
+        defer { beginning = false; beginTask = nil }
         let name = UUID().uuidString + ".wav", url = store.recordingDirectory.appendingPathComponent(name)
         do {
             audio.metronomeBPM = beat ? project.bpm : nil; try await audio.beginRecording(to: url); createdFile = name
@@ -110,7 +110,8 @@ import SwiftUI
     @discardableResult private func saveRecordingMetadata() -> Bool {
         project.tracks[trackIndex].recordingSeconds = audio.elapsed
         if trackIndex == 0 { project.recordingSeconds = audio.elapsed }; project.updated = Date()
-        do { project = try store.save(project, expectedRevision: project.revision ?? 0); return true } catch { self.error = error.localizedDescription; return false }
+        let writing = audio.recordingState == .recording || audio.recordingState == .paused ? createdFile : nil
+        do { project = try store.save(project, expectedRevision: project.revision ?? 0, openRecording: writing); return true } catch { self.error = error.localizedDescription; return false }
     }
     private func finishAndAnalyze() { guard !processing else { return }; guard audio.elapsed > 0.1 else { error = "请先录制一段旋律。"; return }; audio.finishRecording(); if saveRecordingMetadata() { analyze() } }
     private func analyze(start: Double = 0, end: Double = .infinity) {

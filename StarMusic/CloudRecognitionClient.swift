@@ -57,7 +57,8 @@ enum CloudRecognitionClient {
         let ordered = notes.sorted { $0.start < $1.start }
         // This endpoint contract is monophonic humming. Reject contradictory overlap
         // instead of accepting a huge cloud-generated chord or modifying the project.
-        for pair in zip(ordered, ordered.dropFirst()) where pair.0.midi != nil && pair.1.midi != nil {
+        let sounding = ordered.filter { $0.midi != nil }
+        for pair in zip(sounding, sounding.dropFirst()) {
             guard pair.1.rawStart! + 0.04 >= pair.0.rawStart! + pair.0.rawDuration! else { throw RecognitionError.invalidResponse }
         }
         try Task.checkCancellation()

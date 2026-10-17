@@ -60,7 +60,7 @@ import UniformTypeIdentifiers
             Button("保留当前时间与长度") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
             Button("取消", role: .cancel) { overflow = nil }
         }
-        .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
+        .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。" + (RecognitionSettings.load().engine == .cloud ? "将发送从 \(session.track.trimStart ?? 0) 秒开始的所选原声至 \((try? RecognitionSettings.load().endpoint().host) ?? "你配置的服务")，可能产生费用。" : "在本机分析，不上传录音。")) }
         .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: exportTask == nil ? "取消分析，保留原录音" : "取消导出", onCancel: exportTask != nil ? { cancelExport() } : analysis != nil ? { cancelAnalysis() } : nil) }
         .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
         .onChange(of: rawMode) { _, _ in addMode = false; expandedTools = false }
@@ -153,7 +153,7 @@ import UniformTypeIdentifiers
                 }
                 if session.store.recordingURL(session.project, trackID: session.track.id) != nil {
                     Button("试听原始录音") { playSource(session.track.id) }
-                    Button("重新分析原始录音") { reanalyze = true }
+                    Button(RecognitionSettings.load().engine == .cloud ? "发送并生成乐谱" : "重新分析原始录音") { reanalyze = true }
                 }
             } label: { Label("工具", systemImage: "ellipsis").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.toolsMenu")
         }
@@ -327,6 +327,7 @@ import UniformTypeIdentifiers
     }
     private func exportProject() {
         guard !processing else { return }
+        processing = true
         exportTask = Task {
             let identity = UUID(); exportIdentity = identity; processing = true; stage = "正在整理完整项目备份…"
             defer { if exportIdentity == identity { processing = false; exportTask = nil } }
@@ -340,6 +341,7 @@ import UniformTypeIdentifiers
     private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
     private func startExport() {
         guard !processing else { return }
+        processing = true
         exportTask = Task { await exportWAV() }
     }
     private func cancelExport() { exportIdentity = UUID(); exportTask?.cancel(); exportTask = nil; if activeTicket == nil { processing = false } }
@@ -414,6 +416,9 @@ import UniformTypeIdentifiers
                 MusicEdits.attachOriginal(&p.tracks[i], file: name, duration: prepared.duration); p.freeRhythm = true
             } }) else { throw MusicError.invalidProject }
             committed = true
+            if RecognitionSettings.load().engine == .cloud {
+                selectTrack(id); multiTrack = true; session.store.error = "原声已保存在本机，尚未上传。请主动选择发送并生成乐谱。"; return
+            }
             stage = "原声已保存，正在生成候选乐谱…"
             do {
                 let ticket = try session.beginAnalysis(trackID: id), settings = RecognitionSettings.load()
