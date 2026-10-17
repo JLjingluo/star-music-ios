@@ -12,6 +12,9 @@ import SwiftUI
     var onSaved: ((MusicProject) -> Void)?
     @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
     @State private var completed = false
+    @State private var beginning = false
+    @State private var beginTask: Task<Void, Never>?
+    @State private var analysisIdentity = UUID()
     @State private var createdFile: String?
     @State private var beat = false
     @State private var permission = false
@@ -42,13 +45,13 @@ import SwiftUI
                     if audio.recordingState == .ready {
                         Picker("录制模式", selection: $beat) { Text("自由哼唱").tag(false); Text("跟着节奏唱").tag(true) }.pickerStyle(.segmented)
                         if beat { Stepper(rawMode == StudioMode.professional.rawValue ? "\(Int(project.bpm)) BPM" : "每分钟 \(Int(project.bpm)) 下节奏声", value: $project.bpm, in: 40...240, step: 1); Text("建议使用耳机，避免节拍声进入录音。").font(.caption2).foregroundStyle(.secondary) }
-                        Button { Task { await begin() } } label: { Label("开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true, prominentTint: .red).accessibilityIdentifier("recording.start")
+                        Button { guard !beginning else { return }; beginTask = Task { await begin() } } label: { Label(beginning ? "准备麦克风…" : "开始录音", systemImage: "record.circle").frame(minHeight: 44) }.musicAction(prominent: true, prominentTint: .red).disabled(beginning).accessibilityIdentifier("recording.start")
                     } else if audio.recordingState != .finished {
                         HStack(spacing: 16) {
                             Button(audio.recordingState == .recording ? "暂停" : "继续录制") { if audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata() } else { do { try audio.resumeRecording() } catch { self.error = error.localizedDescription } } }.musicAction().frame(minHeight: 44)
-                            GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送原声并识别" : rawMode == StudioMode.professional.rawValue ? "完成并生成乐谱" : "完成，整理旋律", symbol: "checkmark") { finishAndAnalyze() }
+                            GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送并生成乐谱" : "生成乐谱", symbol: "checkmark") { finishAndAnalyze() }
                         }
-                    } else { GoldButton(title: "整理这段旋律", symbol: "music.note") { finishAndAnalyze() } }
+                    } else { GoldButton(title: RecognitionSettings.load().engine == .cloud ? "发送并生成乐谱" : "生成乐谱", symbol: "music.note") { finishAndAnalyze() } }
                     DisclosureGroup("录音小提示") {
                         Text("在安静环境中哼唱一条旋律，可提高准确度。暂不支持复杂歌曲。原录音保存在本机，最多分析 5 分钟。")
                             .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
@@ -58,11 +61,11 @@ import SwiftUI
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { if createdFile != nil { audio.pauseRecording(); saveRecordingMetadata(); leaving = true } else { dismiss() } }.accessibilityIdentifier("recording.cancel") } }
         }
         .interactiveDismissDisabled(createdFile != nil)
-        .onAppear { audio.stopPlayback(); audio.resetRecording() }
-        .onDisappear { audio.finishRecording(); task?.cancel(); if !completed { onSaved?(project) } }
+        .onAppear { project = store.unsavedProjects[project.id] ?? store.projects.first(where: { $0.id == project.id }) ?? project; audio.stopPlayback(); audio.resetRecording() }
+        .onDisappear { beginTask?.cancel(); analysisIdentity = UUID(); audio.finishRecording(); task?.cancel(); if !completed { onSaved?(project) } }
         .onChange(of: audio.elapsed) { _, elapsed in
             if Int(elapsed) >= lastSave + 5 { lastSave = Int(elapsed); saveRecordingMetadata() }
-            if elapsed >= 300 && audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata(); error = "已达到首版 5 分钟的分析范围，录音已暂停，请完成录制。" }
+            if elapsed >= 300 && audio.recordingState == .recording { audio.pauseRecording(); saveRecordingMetadata(); error = "已达到单次录音上限 5 分钟，请完成录制。" }
         }
         .onChange(of: audio.recordingState) { _, state in if state == .paused { saveRecordingMetadata() } }
         .alert("需要麦克风权限", isPresented: $permission) { Button("前往系统设置") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }; Button("空白创作") { edit() }; Button("取消", role: .cancel) {} } message: { Text("麦克风仅用于录制你的哼唱，原始录音保存在本机。你也可以不使用麦克风，直接写谱。") }
@@ -72,7 +75,7 @@ import SwiftUI
             Button("放弃本次录音", role: .destructive) { discardTake() }
             Button("取消", role: .cancel) {}
         }
-        .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: "取消分析，保留原始录音") { task?.cancel(); task = nil; processing = false; if saveRecordingMetadata() { edit() } } }
+        .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: "取消分析，保留原始录音") { analysisIdentity = UUID(); task?.cancel(); task = nil; processing = false; if saveRecordingMetadata() { edit() } } }
         .alert("识谱未完成", isPresented: $failedAnalysis) { Button("重新分析") { analyze() }; Button("截取片段") { trimEnd = project.tracks[trackIndex].recordingSeconds ?? 10; trim = true }; Button("手动写谱") { edit() } } message: { Text(analysisError ?? "原始录音仍保留，可重新分析或手动写谱。") }
         .sheet(isPresented: $trim) {
             NavigationStack {
@@ -91,6 +94,7 @@ import SwiftUI
     }
     private var statusText: String { switch audio.recordingState { case .ready: "首次录音会请求麦克风授权"; case .recording: "正在录音"; case .paused: "已暂停 · 原始录音保留"; case .finished: "录制已结束 · 原声保留" } }
     private func begin() async {
+        guard !beginning else { return }; beginning = true; defer { beginning = false; beginTask = nil }
         let name = UUID().uuidString + ".wav", url = store.recordingDirectory.appendingPathComponent(name)
         do {
             audio.metronomeBPM = beat ? project.bpm : nil; try await audio.beginRecording(to: url); createdFile = name
@@ -106,32 +110,35 @@ import SwiftUI
     @discardableResult private func saveRecordingMetadata() -> Bool {
         project.tracks[trackIndex].recordingSeconds = audio.elapsed
         if trackIndex == 0 { project.recordingSeconds = audio.elapsed }; project.updated = Date()
-        do { try store.save(project); return true } catch { self.error = error.localizedDescription; return false }
+        do { project = try store.save(project, expectedRevision: project.revision ?? 0); return true } catch { self.error = error.localizedDescription; return false }
     }
-    private func finishAndAnalyze() { guard audio.elapsed > 0.1 else { error = "请先录制一段旋律。"; return }; audio.finishRecording(); if saveRecordingMetadata() { analyze() } }
+    private func finishAndAnalyze() { guard !processing else { return }; guard audio.elapsed > 0.1 else { error = "请先录制一段旋律。"; return }; audio.finishRecording(); if saveRecordingMetadata() { analyze() } }
     private func analyze(start: Double = 0, end: Double = .infinity) {
-        guard let url = store.recordingURL(project, trackID: project.tracks[trackIndex].id) else { return }; processing = true
+        guard !processing, let url = store.recordingURL(project, trackID: project.tracks[trackIndex].id) else { return }
+        task?.cancel(); let identity = UUID(); analysisIdentity = identity; processing = true
         let settings = RecognitionSettings.load(), index = trackIndex
+        let targetID = project.tracks[index].id, source = project.tracks[index].recordingFile, projectID = project.id
         stage = settings.engine == .cloud ? "正在发送所选原声至你的音频模型…" : rawMode == StudioMode.professional.rawValue ? "正在使用 \(settings.engine.title) 分析音高与节奏…" : "正在分析录音，整理旋律…"
         let bpm = project.bpm, free = project.freeRhythm
         task = Task {
             do {
                 let result = try await RecognitionService.analyze(url: url, bpm: bpm, free: free, start: start, end: end, settings: settings)
                 try Task.checkCancellation()
+                guard analysisIdentity == identity, project.id == projectID, project.tracks.indices.contains(index), project.tracks[index].id == targetID, project.tracks[index].recordingFile == source else { return }
                 stage = rawMode == StudioMode.professional.rawValue ? "正在生成乐谱并保存草稿…" : "正在保存你的旋律…"
                 let offset = project.tracks[index].sourceStartBeat ?? 0
                 project.tracks[index].notes = result.notes.map { var note = $0; note.start += offset; note.sourceFile = project.tracks[index].recordingFile; return note }
                 project.tracks[index].transcript = result.transcript; project.tracks[index].recognitionSource = settings.engine.title
                 project.tracks[index].trimStart = start; project.tracks[index].trimEnd = end.isFinite ? end : nil; project.tracks[index].useOriginalAudio = false
                 processing = false; if saveRecordingMetadata() { edit() }
-            } catch { processing = false; if !Task.isCancelled { analysisError = error.localizedDescription; failedAnalysis = true } }
-            task = nil
+            } catch { if analysisIdentity == identity { processing = false; if !Task.isCancelled { analysisError = error.localizedDescription; failedAnalysis = true } } }
+            if analysisIdentity == identity { task = nil }
         }
     }
     private func edit() { completed = true; onEdit(project) }
     private func discardTake() {
-        audio.finishRecording(); task?.cancel()
-        do { try store.save(initialProject); project = initialProject; if let createdFile { try? FileManager.default.removeItem(at: store.recordingDirectory.appendingPathComponent(createdFile)) }; dismiss() }
+        analysisIdentity = UUID(); audio.finishRecording(); task?.cancel()
+        do { var original = initialProject; original.revision = project.revision; project = try store.save(original, expectedRevision: project.revision ?? 0); if let createdFile { try? FileManager.default.removeItem(at: store.recordingDirectory.appendingPathComponent(createdFile)) }; dismiss() }
         catch { self.error = error.localizedDescription }
     }
 }

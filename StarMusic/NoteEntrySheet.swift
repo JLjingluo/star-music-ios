@@ -17,9 +17,10 @@ struct NoteEntrySheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Stepper(professional ? MusicNote(midi: pitch, start: 0, duration: 1).pitchName : "声音高低：\(pitch + 1)", value: $pitch, in: 0...127).accessibilityIdentifier("noteEntry.pitch")
+                    Stepper(MusicNote(midi: pitch, start: 0, duration: 1).pitchName, value: $pitch, in: 0...127).accessibilityIdentifier("noteEntry.pitch")
                     Button("听听这个声音") { Task { do { try await audio.preview(.piano, midi: pitch) } catch { store.error = error.localizedDescription } } }
-                } header: { Text("声音") } footer: { Text("数字越大，声音越高。可以先试听，再添加。") }
+                    if professional { Text("MIDI 音高：\(pitch)").font(.caption).foregroundStyle(.secondary) }
+                } header: { Text("声音片段") } footer: { Text("减号降低一点，加号升高一点。可以先试听，再添加。") }
                 Section("位置与长度") {
                     Stepper("从 \(start, specifier: "%.1f") 秒开始", value: $start, in: 0...600, step: 0.1)
                     Stepper("持续 \(duration, specifier: "%.1f") 秒", value: $duration, in: 0.1...20, step: 0.1)

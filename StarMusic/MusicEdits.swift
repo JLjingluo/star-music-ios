@@ -1,6 +1,13 @@
 import Foundation
 
 enum MusicEdits {
+    static func sameTimedMusic(_ a: [MusicNote], _ b: [MusicNote], oldBPM: Double, newBPM: Double) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { pair in
+            pair.0.id == pair.1.id && pair.0.midi == pair.1.midi && pair.0.tied == pair.1.tied &&
+            abs(pair.0.start / oldBPM - pair.1.start / newBPM) < 0.00000001 &&
+            abs(pair.0.duration / oldBPM - pair.1.duration / newBPM) < 0.00000001
+        }
+    }
     static func sameMusic(_ a: [MusicNote], _ b: [MusicNote]) -> Bool {
         a.count == b.count && zip(a, b).allSatisfy { $0.id == $1.id && $0.midi == $1.midi && $0.start == $1.start && $0.duration == $1.duration && $0.tied == $1.tied }
     }
@@ -20,7 +27,7 @@ enum MusicEdits {
         return (first, second)
     }
     static func merged(_ first: MusicNote, _ second: MusicNote) throws -> MusicNote {
-        guard first.sourceFile == second.sourceFile else { throw MusicError.save("不同录音的声音不能直接合并，请分别编辑") }
+        guard first.sourceFile == second.sourceFile else { throw MusicError.operation("不同录音的声音不能直接合并，请分别编辑") }
         var note = first
         note.start = min(first.start, second.start)
         note.duration = max(first.start + first.duration, second.start + second.duration) - note.start
@@ -32,7 +39,7 @@ enum MusicEdits {
     }
     static func offset(_ track: MusicTrack, to newStart: Double) throws -> MusicTrack {
         let delta = newStart - (track.sourceStartBeat ?? 0)
-        guard newStart >= 0, track.notes.allSatisfy({ $0.start + delta >= 0 }) else { throw MusicError.save("这次移动会把旋律推到起点之前，请少移动一点") }
+        guard newStart >= 0, track.notes.allSatisfy({ $0.start + delta >= 0 }) else { throw MusicError.operation("这次移动会把旋律推到起点之前，请少移动一点") }
         var result = track; result.sourceStartBeat = newStart
         for i in result.notes.indices { result.notes[i].start += delta }
         return result
@@ -44,7 +51,22 @@ enum MusicEdits {
         return (original, part)
     }
     static func originalStart(_ note: MusicNote, track: MusicTrack, bpm: Double) -> Double {
-        note.rawStart ?? max(0, note.start - (track.sourceStartBeat ?? 0)) * 60 / bpm
+        note.rawStart ?? (track.trimStart ?? 0) + max(0, note.start - (track.sourceStartBeat ?? 0)) * 60 / bpm
+    }
+    static func changingBPM(_ project: MusicProject, to bpm: Double, preserveTime: Bool) throws -> MusicProject {
+        guard bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.invalidProject }
+        var result = project; let ratio = bpm / project.bpm
+        for t in result.tracks.indices {
+            for n in result.tracks[t].notes.indices {
+                if project.tracks[t].recordingFile != nil && result.tracks[t].notes[n].rawStart == nil {
+                    result.tracks[t].notes[n].rawStart = originalStart(project.tracks[t].notes[n], track: project.tracks[t], bpm: project.bpm)
+                    result.tracks[t].notes[n].rawDuration = project.tracks[t].notes[n].duration * 60 / project.bpm
+                }
+                if preserveTime { result.tracks[t].notes[n].start *= ratio; result.tracks[t].notes[n].duration *= ratio }
+            }
+            if preserveTime, let offset = result.tracks[t].sourceStartBeat { result.tracks[t].sourceStartBeat = offset * ratio }
+        }
+        result.bpm = bpm; try result.validate(); return result
     }
 }
 
@@ -93,8 +115,8 @@ struct ScoreGeometry {
     var height: CGFloat
     static func rawY(_ note: MusicNote) -> CGFloat { 128 - CGFloat(note.staffPosition - 37) * 6 }
     init(notes: [MusicNote]) {
-        offset = max(0, 30 - (notes.map(Self.rawY).min() ?? 80))
-        height = max(235, (notes.map(Self.rawY).max() ?? 128) + offset + 40)
+        offset = max(0, 70 - (notes.map(Self.rawY).min() ?? 80))
+        height = max(235, 178 + offset, (notes.map(Self.rawY).max() ?? 128) + offset + 40)
     }
     func y(_ note: MusicNote) -> CGFloat { Self.rawY(note) + offset }
 }

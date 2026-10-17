@@ -59,10 +59,12 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
     var deleted = false
     var sample = false
     var freeRhythm = false
+    var revision: Int?
     var recordingFile: String?
     var recordingSeconds: Double?
     var source: String?
     var tracks = [MusicTrack()]
+    var audioFiles: Set<String> { Set(tracks.flatMap { ($0.sourceHistory ?? []) + [$0.recordingFile].compactMap { $0 } + $0.notes.compactMap(\.sourceFile) } + [recordingFile].compactMap { $0 }) }
     var beats: Double {
         let notes = tracks.flatMap(\.notes).map { $0.start + $0.duration }.max() ?? 4
         let clips = tracks.filter { $0.recordingFile != nil && $0.useOriginalAudio == true }.map { ($0.sourceStartBeat ?? 0) + $0.sourceDuration * bpm / 60 }.max() ?? 0
@@ -103,7 +105,8 @@ struct MusicProject: Codable, Identifiable, Equatable, Sendable {
         return p
     }
     func validate() throws {
-        guard !name.isEmpty, name.count <= 120, bpm.isFinite, (30...300).contains(bpm), (1...128).contains(tracks.count) else { throw MusicError.invalidProject }
+        guard (1...128).contains(tracks.count), tracks.reduce(0, { $0 + $1.notes.count }) <= 20000 else { throw MusicError.projectCapacity }
+        guard !name.isEmpty, name.count <= 120, bpm.isFinite, (30...300).contains(bpm) else { throw MusicError.invalidProject }
         guard recordingFile.map(Self.validRecordingName) ?? true, recordingSeconds.map({ $0.isFinite && $0 >= 0 && $0 <= 100000 }) ?? true else { throw MusicError.invalidProject }
         var count = 0
         for track in tracks {
@@ -133,7 +136,7 @@ struct ProjectPackage: Codable {
 }
 
 enum MusicError: LocalizedError {
-    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, midiCapacity, save(String)
+    case invalidProject, invalidMIDI, noNotes, permission, tooLarge, midiCapacity, save(String), missingAudio(String), staleRevision, operation(String), unsupportedVersion(Int), projectCapacity
     var errorDescription: String? {
         switch self {
         case .invalidProject: "项目数据无效或超出支持范围。"
@@ -143,6 +146,11 @@ enum MusicError: LocalizedError {
         case .permission: "麦克风权限被拒绝。可以前往系统设置允许麦克风，或从空白乐谱开始。"
         case .tooLarge: "支持 256 MB 以内音频文件、512 MB 以内项目包；单次音频分析最长 5 分钟，成品导出最长 10 分钟。"
         case .save(let reason): "保存失败：\(reason)。当前编辑仍保留在内存中。"
+        case .missingAudio(let file): "缺少原声附件：\(file)。请从完整项目备份恢复；不会用静音代替缺失录音。"
+        case .operation(let reason): "操作未完成：\(reason)。原有内容没有被替换。"
+        case .unsupportedVersion(let version): "此工程使用较新的格式版本 \(version)，请更新 Star Music 后重新导入。"
+        case .projectCapacity: "一个项目最多支持 128 条音轨和 20,000 个音符。请减少内容后重试。"
+        case .staleRevision: "项目已有更新版本，本次旧结果未覆盖它。请重新打开最新草稿。"
         }
     }
 }

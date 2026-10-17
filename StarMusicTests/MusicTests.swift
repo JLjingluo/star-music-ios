@@ -1,5 +1,7 @@
 import XCTest
 import AVFoundation
+import UIKit
+import CoreText
 @testable import StarMusic
 
 final class MusicTests: XCTestCase {
@@ -79,7 +81,7 @@ final class MusicTests: XCTestCase {
         XCTAssertTrue(reopened.saveStatus.contains("失败"))
         let package = try store.package(original)
         defer { try? FileManager.default.removeItem(at: package) }
-        let exported = try JSONDecoder().decode(ProjectPackage.self, from: Data(contentsOf: package))
+        let exported = try XCTUnwrap(ProjectArchive.header(from: package))
         XCTAssertEqual(exported.project.tracks[0].notes.first?.midi, 72)
         let old = try JSONDecoder().decode(MusicProject.self, from: Data(contentsOf: backup.appendingPathComponent(original.id.uuidString + ".json")))
         XCTAssertTrue(old.tracks[0].notes.isEmpty, "Failure must never claim a disk save.")
@@ -662,5 +664,152 @@ final class ScoreBoundsTests: XCTestCase {
         let notes = (0...127).map { MusicNote(midi: $0, start: Double($0), duration: 0.25) }
         let geometry = ScoreGeometry(notes: notes)
         for note in notes { XCTAssertGreaterThanOrEqual(geometry.y(note) - 22, 0); XCTAssertLessThanOrEqual(geometry.y(note) + 22, geometry.height) }
+    }
+}
+
+final class RevisionSafetyTests: XCTestCase {
+    private func root() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
+    @MainActor func testFailedPrimarySaveRecoversLatestEditAfterNewStoreColdLoad() throws {
+        let root = root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); let p = try store.save(MusicProject())
+        let backup = root.appendingPathComponent("PrimaryBeforeFailure")
+        try FileManager.default.moveItem(at: store.projectDirectory, to: backup)
+        try Data("unwritable directory".utf8).write(to: store.projectDirectory)
+        let editor = EditorSession(p, store: store); editor.addNote(midi: 73, start: 1.125, duration: 0.1875)
+        XCTAssertTrue(editor.saveStatus.contains("失败")); XCTAssertTrue(store.durableRecovery.contains(p.id))
+        let cold = ProjectStore(root: root)
+        let recovered = try XCTUnwrap(cold.unsavedProjects[p.id])
+        XCTAssertEqual(recovered.tracks[0].notes.first?.midi, 73)
+        XCTAssertEqual(recovered.tracks[0].notes.first?.start, 1.125)
+        XCTAssertNotNil(cold.recoveryMessage)
+        try FileManager.default.removeItem(at: cold.projectDirectory)
+        try FileManager.default.moveItem(at: backup, to: cold.projectDirectory)
+        let resumed = EditorSession(recovered, store: cold); XCTAssertTrue(resumed.persist())
+        let reopened = ProjectStore(root: root)
+        XCTAssertNil(reopened.unsavedProjects[p.id]); XCTAssertEqual(reopened.projects.first { $0.id == p.id }?.tracks[0].notes.first?.midi, 73)
+    }
+    @MainActor func testStaleEditorCannotOverwriteNewerCommittedRevision() throws {
+        let root = root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root), p = try store.save(MusicProject())
+        let first = EditorSession(p, store: store), stale = EditorSession(p, store: store)
+        first.addNote(midi: 70, start: 0); stale.addNote(midi: 90, start: 1)
+        XCTAssertTrue(stale.saveStatus.contains("失败"))
+        XCTAssertEqual(store.projects.first { $0.id == p.id }?.tracks[0].notes.map(\.midi), [70])
+        XCTAssertEqual(ProjectStore(root: root).projects.first { $0.id == p.id }?.tracks[0].notes.map(\.midi), [70])
+    }
+    @MainActor func testAnalysisLeaseBindsTrackRevisionAndCancellationBeforeCommit() throws {
+        let root = root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject()
+        try AudioRenderer.pcmWAV(Array(repeating: 0.1, count: 16000), rate: 16000).write(to: store.recordingDirectory.appendingPathComponent("take.wav"))
+        p.tracks[0].recordingFile = "take.wav"; p.tracks[0].recordingSeconds = 1; p.tracks.append(MusicTrack(name: "B"))
+        p = try store.save(p); let editor = EditorSession(p, store: store), id = p.tracks[0].id
+        let result = RecognitionResult(notes: [MusicNote(midi: 69, start: 0, duration: 1, rawStart: 0, rawDuration: 0.625)])
+        let changed = try editor.beginAnalysis(trackID: id)
+        editor.addNote(midi: 72, start: 0)
+        XCTAssertEqual(editor.finishAnalysis(changed, result: result, engine: "fixture"), .candidate)
+        XCTAssertEqual(editor.track.notes.first?.midi, 72)
+        let candidate = try XCTUnwrap(editor.recognitionCandidates.first); editor.keepCandidateAsTrack(candidate)
+        XCTAssertEqual(editor.track.notes.first?.midi, 69); XCTAssertEqual(editor.project.tracks[0].notes.first?.midi, 72)
+        editor.undo(); XCTAssertEqual(editor.project.tracks.count, 2)
+        let cancelled = try editor.beginAnalysis(trackID: id); editor.cancelAnalysis(cancelled)
+        XCTAssertEqual(editor.finishAnalysis(cancelled, result: result, engine: "fixture"), .discarded)
+        let old = try editor.beginAnalysis(trackID: id), latest = try editor.beginAnalysis(trackID: id)
+        XCTAssertEqual(editor.finishAnalysis(old, result: result, engine: "fixture"), .discarded)
+        editor.trackIndex = 1
+        XCTAssertEqual(editor.finishAnalysis(latest, result: result, engine: "fixture"), .applied)
+        XCTAssertTrue(editor.project.tracks[1].notes.isEmpty)
+        editor.undo(); XCTAssertEqual(editor.project.tracks[0].notes.first?.midi, 72)
+        let deleted = try editor.beginAnalysis(trackID: id); editor.edit { $0.tracks.removeAll { $0.id == id } }
+        XCTAssertEqual(editor.finishAnalysis(deleted, result: result, engine: "fixture"), .discarded)
+        XCTAssertEqual(editor.project.tracks.count, 1)
+    }
+    @MainActor func testMissingAudioCannotCommitOrSilentlyExportAndPreservesLatestNotes() throws {
+        let root = root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject()
+        p.tracks[0].recordingFile = "missing.wav"; p.tracks[0].notes = [MusicNote(midi: 64, start: 0, duration: 1)]
+        XCTAssertThrowsError(try store.save(p)); XCTAssertThrowsError(try store.package(p))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.projectDirectory.appendingPathComponent(p.id.uuidString + ".json").path))
+        XCTAssertEqual(store.unsavedProjects[p.id]?.tracks[0].notes.first?.midi, 64)
+        let reopened = ProjectStore(root: root); XCTAssertNotNil(reopened.error); XCTAssertEqual(reopened.unsavedProjects[p.id]?.tracks[0].notes.first?.midi, 64)
+    }
+    @MainActor func testStreamingArchiveChecksTruncationAndKeepsCopiesIndependent() throws {
+        let root = root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root); var p = MusicProject()
+        let source = AudioRenderer.pcmWAV(Array(repeating: 0.2, count: 32000), rate: 16000)
+        try source.write(to: store.recordingDirectory.appendingPathComponent("one.wav"))
+        p.tracks[0].recordingFile = "one.wav"; p.tracks[0].recordingSeconds = 2
+        p = try store.save(p); let archive = try store.package(p)
+        let header = try XCTUnwrap(ProjectArchive.header(from: archive)); XCTAssertEqual(header.version, 3)
+        XCTAssertEqual(header.attachments.first?.bytes, source.count)
+        let imported = try store.importPackage(archive), file = try XCTUnwrap(store.recordingURL(imported))
+        XCTAssertNotEqual(imported.id, p.id); XCTAssertNotEqual(file.lastPathComponent, "one.wav"); XCTAssertEqual(try Data(contentsOf: file), source)
+        try FileManager.default.removeItem(at: store.recordingDirectory.appendingPathComponent("one.wav"))
+        XCTAssertEqual(try Data(contentsOf: file), source)
+        var truncated = try Data(contentsOf: archive); truncated.removeLast()
+        let before = try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path)
+        XCTAssertThrowsError(try store.importPackage(truncated))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.recordingDirectory.path), before)
+    }
+    func testBPMReferenceAndCropMappingKeepRealTimeAndOriginalPitch() throws {
+        var p = MusicProject(); p.bpm = 120
+        p.tracks[0].recordingFile = "take.wav"; p.tracks[0].recordingSeconds = 30; p.tracks[0].trimStart = 10; p.tracks[0].trimEnd = 20
+        p.tracks[0].sourceStartBeat = 4; p.tracks[0].useOriginalAudio = true
+        p.tracks[0].notes = [MusicNote(midi: 69, start: 5, duration: 1, rawStart: 10.5, rawDuration: 0.5)]
+        let changed = try MusicEdits.changingBPM(p, to: 90, preserveTime: true)
+        XCTAssertEqual(changed.seconds, p.seconds, accuracy: 0.00001)
+        XCTAssertEqual(changed.tracks[0].notes[0].start * 60 / changed.bpm, 2.5, accuracy: 0.00001)
+        XCTAssertEqual(changed.tracks[0].notes[0].midi, 69); XCTAssertEqual(changed.tracks[0].useOriginalAudio, true)
+        XCTAssertEqual(MusicEdits.originalStart(changed.tracks[0].notes[0], track: changed.tracks[0], bpm: changed.bpm), 10.5)
+        let manual = MusicNote(midi: 60, start: 5, duration: 1)
+        XCTAssertEqual(MusicEdits.originalStart(manual, track: p.tracks[0], bpm: 120), 10.5)
+    }
+    func testFileRenderSharesMixRulesAcrossChunkBoundariesAndReportsMissingOriginal() throws {
+        let root = root(); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        try AudioRenderer.pcmWAV(Array(repeating: 0.2, count: 192000), rate: 48000).write(to: root.appendingPathComponent("take.wav"))
+        var p = MusicProject(); p.bpm = 120
+        p.tracks[0].recordingFile = "take.wav"; p.tracks[0].recordingSeconds = 4; p.tracks[0].trimStart = 1; p.tracks[0].trimEnd = 3
+        p.tracks[0].sourceStartBeat = 2; p.tracks[0].useOriginalAudio = true; p.tracks[0].volume = 0.5
+        let file = try AudioRenderer.file(p, recordingDirectory: root); defer { try? FileManager.default.removeItem(at: file) }
+        let decoded = try AudioController.samples(from: file)
+        XCTAssertEqual(decoded.samples[8000], 0, accuracy: 0.001)
+        XCTAssertEqual(decoded.samples[19200], 0.1, accuracy: 0.004)
+        XCTAssertEqual(decoded.samples[43200], 0.1, accuracy: 0.004)
+        XCTAssertEqual(decoded.samples[51200], 0, accuracy: 0.001)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("take.wav"))
+        XCTAssertThrowsError(try AudioRenderer.file(p, recordingDirectory: root))
+    }
+    func testDenseScoreSpacingPaginationAndFontGlyphCoverage() throws {
+        let notes = (0..<20000).map { MusicNote(midi: 60 + $0 % 12, start: Double($0) * 0.02, duration: 0.03) }
+        let pages = ScoreLayout.pages(notes); XCTAssertEqual(pages.count, 625)
+        XCTAssertEqual(pages.flatMap { $0 }, notes)
+        for page in pages.prefix(3) {
+            let layout = ScoreLayout(notes: page)
+            for pair in zip(page, page.dropFirst()) { XCTAssertGreaterThanOrEqual(layout.x(pair.1) - layout.x(pair.0), 59.9) }
+            XCTAssertLessThan(layout.width, 2400)
+        }
+        let font = try XCTUnwrap(UIFont(name: "Bravura", size: 48))
+        let core = CTFontCreateWithName(font.fontName as CFString, 48, nil)
+        var characters: [UniChar] = [0xE050, 0xE261, 0xE262, 0xE4E3, 0xE4E4, 0xE4E5, 0xE4E6, 0xE4E7, 0xE4E8, 0xE4E9]
+        var glyphs = [CGGlyph](repeating: 0, count: characters.count)
+        XCTAssertTrue(CTFontGetGlyphsForCharacters(core, &characters, &glyphs, characters.count)); XCTAssertFalse(glyphs.contains(0))
+    }
+    func testServiceKeysAreBoundToEndpointAndDeletionDoesNotAffectOtherService() throws {
+        var a = RecognitionSettings(), b = RecognitionSettings(); a.baseURL = "https://" + UUID().uuidString.lowercased() + ".example.test/v1"; b.baseURL = "https://" + UUID().uuidString.lowercased() + ".example.test/v1"
+        defer { try? ModelKeychain.save("", for: a); try? ModelKeychain.save("", for: b) }
+        try ModelKeychain.save("service-a-fixture", for: a)
+        XCTAssertEqual(try ModelKeychain.read(for: a), "service-a-fixture"); XCTAssertEqual(try ModelKeychain.read(for: b), "")
+        try ModelKeychain.save("service-b-fixture", for: b); try ModelKeychain.save("", for: a)
+        XCTAssertEqual(try ModelKeychain.read(for: a), ""); XCTAssertEqual(try ModelKeychain.read(for: b), "service-b-fixture")
+    }
+    func testMalformedCloudCandidatesFailBeforeAnyProjectCommit() throws {
+        let bad = [
+            #"{"notes":[{"midi":60,"startSeconds":0,"durationSeconds":2},{"midi":62,"startSeconds":1,"durationSeconds":1}]}"#,
+            #"{"notes":[{"midi":60,"startSeconds":-1,"durationSeconds":1}]}"#,
+            #"{"notes":[{"midi":"60","startSeconds":0,"durationSeconds":1}]}"#,
+            #"{"notes":[{"midi":128,"startSeconds":0,"durationSeconds":1}]}"#,
+            #"{"notes":[{"midi":60,"startSeconds":0,"durationSeconds":99}]}"#,
+            #"{"notes":[{"midi":60,"startSeconds":0,"durationSeconds":1,"confidence":2}]}"#
+        ]
+        for text in bad { XCTAssertThrowsError(try CloudRecognitionClient.decode(text, duration: 3, bpm: 120, free: true)) }
     }
 }

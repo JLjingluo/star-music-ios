@@ -12,7 +12,7 @@ enum RecognitionService {
         var result: RecognitionResult
         if settings.engine == .cloud || speechOnly {
             let wav = AudioRenderer.pcmWAV(samples, rate: 16000)
-            result = try await CloudRecognitionClient.analyze(wav: wav, duration: Double(samples.count) / 16000, bpm: bpm, free: free, settings: settings, key: try ModelKeychain.read(), speechOnly: speechOnly)
+            result = try await CloudRecognitionClient.analyze(wav: wav, duration: Double(samples.count) / 16000, bpm: bpm, free: free, settings: settings, key: try ModelKeychain.read(for: settings), speechOnly: speechOnly)
         } else {
             let worker = Task.detached(priority: .userInitiated) { try PitchAnalyzer.analyze(samples, sampleRate: 16000, bpm: bpm, free: free, engine: settings.engine) }
             let notes = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })

@@ -1,0 +1,9 @@
+{
+  "font": "Bravura",
+  "license": "SIL OFL 1.1",
+  "upstream": "steinbergmedia/bravura",
+  "commit": "37b194378b710cc40e406ab6c4b07608bb9548ae",
+  "originalUnmodified": true,
+  "sha256": "cdf0f893ee1fdb64b7f6713d71ee0dcfc349c0ac01429a8e451b01a9e79f5f3b",
+  "glyphEncoding": "SMuFL private use area"
+}

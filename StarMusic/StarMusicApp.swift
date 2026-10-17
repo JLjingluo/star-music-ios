@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
     }
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(store).environmentObject(audio)
+            RootView().modifier(NativePreviewTypeSize()).environmentObject(store).environmentObject(audio)
                 .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)
                 .tint(Palette.accent)
         }
@@ -113,6 +113,7 @@ struct RootView: View {
         }
         .sensoryFeedback(.selection, trigger: tab) { _, _ in haptics }
         .onChange(of: tab) { _, _ in audio.stopPlayback() }
+        .onOpenURL { url in Task { await importMusic(url) } }
         .sheet(isPresented: $help) { HelpView() }
         .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .midi, .json, .data], allowsMultipleSelection: false) { result in
             switch result { case .success(let urls): if let url = urls.first { Task { await importMusic(url) } }; case .failure(let error): store.error = error.localizedDescription }
@@ -127,12 +128,13 @@ struct RootView: View {
     }
     private func open(_ p: MusicProject) { audio.stopPlayback(); route = ProjectRoute(project: p) }
     private func importMusic(_ url: URL) async {
+        guard !importing else { store.error = "正在处理上一个文件，请完成后再导入。"; return }
         importing = true; defer { importing = false }
         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
             let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0; guard size <= (url.pathExtension.lowercased() == "starmusic" || url.pathExtension.lowercased() == "json" ? 512 : 256) * 1024 * 1024 else { throw MusicError.tooLarge }
             let ext = url.pathExtension.lowercased(); var p: MusicProject
-            if ext == "starmusic" || ext == "json" { p = try store.importPackage(Data(contentsOf: url)) }
+            if ext == "starmusic" || ext == "json" { p = try store.importPackage(url) }
             else if ext == "mid" || ext == "midi" { p = try MIDI.parse(Data(contentsOf: url)); p.name = MusicProject.projectName(url.deletingPathExtension().lastPathComponent); try store.save(p) }
             else {
                 let prepared = try await AudioImport.prepare(url, directory: store.recordingDirectory)
@@ -183,5 +185,16 @@ struct ProcessingView: View {
             }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle("正在处理").navigationBarTitleDisplayMode(.inline)
         }.presentationDetents([.medium]).interactiveDismissDisabled()
+    }
+}
+
+private struct NativePreviewTypeSize: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-large-type") { content.dynamicTypeSize(.accessibility3) }
+        else { content }
+        #else
+        content
+        #endif
     }
 }

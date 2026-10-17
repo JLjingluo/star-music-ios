@@ -44,7 +44,7 @@ enum CloudRecognitionClient {
     }
     static func decode(_ text: String, duration: Double, bpm: Double, free: Bool, speechOnly: Bool = false) throws -> RecognitionResult {
         guard duration.isFinite, duration > 0, bpm.isFinite, (30...300).contains(bpm), let first = text.firstIndex(of: "{"), let last = text.lastIndex(of: "}") else { throw RecognitionError.invalidResponse }
-        guard let payload = try? JSONDecoder().decode(Payload.self, from: Data(text[first...last].utf8)), (payload.notes?.count ?? 0) <= 20000 else { throw RecognitionError.invalidResponse }
+        guard text.utf8.count <= 8 * 1024 * 1024, let payload = try? JSONDecoder().decode(Payload.self, from: Data(text[first...last].utf8)), (payload.notes?.count ?? 0) <= 20000 else { throw RecognitionError.invalidResponse }
         var notes: [MusicNote] = []
         for note in payload.notes ?? [] {
             guard note.startSeconds.isFinite, note.durationSeconds.isFinite, note.startSeconds >= 0, note.durationSeconds > 0,
@@ -54,6 +54,13 @@ enum CloudRecognitionClient {
             notes.append(MusicNote(midi: note.midi, start: free ? start : (start * 4).rounded() / 4, duration: free ? beats : max(0.25, (beats * 4).rounded() / 4), confidence: min(0.75, note.confidence ?? 0.55), rawStart: note.startSeconds, rawDuration: length))
         }
         guard speechOnly || !notes.isEmpty else { throw RecognitionError.invalidResponse }
-        return RecognitionResult(notes: notes.sorted { $0.start < $1.start }, transcript: payload.transcript.map { String($0.prefix(20000)) })
+        let ordered = notes.sorted { $0.start < $1.start }
+        // This endpoint contract is monophonic humming. Reject contradictory overlap
+        // instead of accepting a huge cloud-generated chord or modifying the project.
+        for pair in zip(ordered, ordered.dropFirst()) where pair.0.midi != nil && pair.1.midi != nil {
+            guard pair.1.rawStart! + 0.04 >= pair.0.rawStart! + pair.0.rawDuration! else { throw RecognitionError.invalidResponse }
+        }
+        try Task.checkCancellation()
+        return RecognitionResult(notes: ordered, transcript: payload.transcript.map { String($0.prefix(20000)) })
     }
 }

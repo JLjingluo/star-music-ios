@@ -9,10 +9,11 @@ import UniformTypeIdentifiers
     @StateObject private var session: EditorSession
     @State private var addMode = false
     @State private var multiTrack = false
+    @State private var notationPreference: Bool?
+    private var showScore: Bool { notationPreference ?? professional }
     @State private var instruments = false
     @State private var share: ShareItem?
     @State private var export = false
-    @State private var publish = false
     @State private var transpose = false
     @State private var saveFailure = false
     @State private var renaming = false
@@ -22,6 +23,10 @@ import UniformTypeIdentifiers
     @State private var overflow: Double?
     @State private var processing = false
     @State private var analysis: Task<Void, Never>?
+    @State private var activeTicket: AnalysisTicket?
+    @State private var exportTask: Task<Void, Never>?
+    @State private var exportIdentity = UUID()
+    @State private var workspaceVisible = true
     @State private var reanalyze = false
     @State private var loop = false
     @State private var addTrack = false
@@ -34,6 +39,7 @@ import UniformTypeIdentifiers
     @State private var stage = "正在处理音频…"
     @AppStorage("studioMode") private var rawMode = StudioMode.standard.rawValue
     @State private var expandedTools = false
+    @State private var preserveTiming = true
     private var professional: Bool { rawMode == StudioMode.professional.rawValue }
     private var standard: Bool { rawMode == StudioMode.standard.rawValue }
     private var simpleMode: Bool { rawMode == StudioMode.simple.rawValue && !expandedTools }
@@ -46,30 +52,38 @@ import UniformTypeIdentifiers
             Button("保存") { session.edit { $0.name = newName.isEmpty ? "未命名的旋律" : String(newName.prefix(60)) } }
             Button("取消", role: .cancel) {}
         }
-        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { Task { await exportWAV() } }; Button("取消", role: .cancel) {} }
-        .alert("发布服务尚未接入", isPresented: $publish) { Button("导出 WAV 分享") { Task { await exportWAV() } }; Button("继续创作", role: .cancel) {} } message: { Text("作品仍是本地草稿。你可以导出音频分享，不会显示模拟发布成功。") }
-        .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text("当前编辑仍保留在本次运行的内存中。返回草稿后也可重新打开重试；请勿强制退出或删除应用。") }
+        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { startExport() }; Button("取消", role: .cancel) {} }
+        .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text(session.store.durableRecovery.contains(session.project.id) ? "正式保存未完成，已写入恢复快照，重启后会提示恢复。请重试保存或导出最新项目包。" : "最新修改尚未写入磁盘；恢复快照也未能保存。请立即导出最新项目包，并避免强制退出或删除应用。") }
         .sheet(isPresented: $transpose) { KeyShiftSheet(project: session.project, recordingDirectory: session.store.recordingDirectory, professional: professional) { shifted in session.edit { $0 = shifted } }.presentationDetents([.large]) }
         .confirmationDialog("音符时值跨越小节", isPresented: Binding(get: { overflow != nil }, set: { if !$0 { overflow = nil } }), titleVisibility: .visible) {
-            Button("后移到下一小节") { if let d = overflow { session.editNote { $0.start = (floor($0.start / 4) + 1) * 4; $0.duration = d }; overflow = nil } }
-            Button("保留跨小节延音") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
+            Button("移到下一小节（会推迟开始）") { if let d = overflow { session.editNote { $0.start = (floor($0.start / 4) + 1) * 4; $0.duration = d }; overflow = nil } }
+            Button("保留当前时间与长度") { if let d = overflow { session.editNote { $0.duration = d; $0.tied = true }; overflow = nil } }
             Button("取消", role: .cancel) { overflow = nil }
         }
         .alert("重新分析会替换所选音轨的音符", isPresented: $reanalyze) { Button("确认重新分析", role: .destructive) { analyzeOriginal() }; Button("取消", role: .cancel) {} } message: { Text("当前轨的改动会被替换，可撤销。其他轨道不受影响；完整原声保留。若选择大模型，将发送所选原声片段至你的接口。") }
-        .sheet(isPresented: $processing) { ProcessingView(stage: stage, onCancel: analysis == nil ? nil : { analysis?.cancel(); analysis = nil; processing = false }) }
+        .sheet(isPresented: $processing) { ProcessingView(stage: stage, cancelTitle: exportTask == nil ? "取消分析，保留原录音" : "取消导出", onCancel: exportTask != nil ? { cancelExport() } : analysis != nil ? { cancelAnalysis() } : nil) }
         .alert("操作未完成", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) { Button("知道了", role: .cancel) { session.store.error = nil } } message: { Text(session.store.error ?? "") }
         .onChange(of: rawMode) { _, _ in addMode = false; expandedTools = false }
-        .onDisappear { audio.stopPlayback(); analysis?.cancel(); session.persist() }
+        .onAppear { workspaceVisible = true }
+        .onDisappear { workspaceVisible = false; audio.stopPlayback(); cancelAnalysis(); session.cancelAllAnalysis(); cancelExport(); if recording == nil { session.persist() } }
     }
     private var editorContent: some View {
         ScrollView {
                 VStack(spacing: 24) {
                     editorHeader
+                    if let candidate = session.recognitionCandidates.first {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("识谱完成，当前音轨已有新修改").font(.headline)
+                            Text("原来的改动没有被覆盖。你可以把候选旋律加入独立音轨后比较。").font(.caption).foregroundStyle(.secondary)
+                            Button("加入独立音轨") { session.keepCandidateAsTrack(candidate); multiTrack = true }
+                            Button("放弃这份候选", role: .destructive) { session.recognitionCandidates.removeAll { $0.id == candidate.id } }
+                        }.musicCard()
+                    }
                     melodyContent
-                    playbackBar
                     editingTools
                 }.padding(16).animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: session.selectedNote)
             }.background(Palette.background(scheme))
+            .safeAreaInset(edge: .bottom, spacing: 0) { playbackBar.padding(.horizontal, 16).padding(.vertical, 10).background(Palette.background(scheme)) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { editorToolbar }
     }
@@ -91,18 +105,18 @@ import UniformTypeIdentifiers
                     HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); Button(session.saveStatus) { if !session.persist() { saveFailure = true } }.font(.caption).frame(minHeight: 44).foregroundStyle(.secondary).accessibilityIdentifier("editor.saveStatus") }
                     if professional { parameterBar }
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() }
-                    Picker("编辑视图", selection: $multiTrack) { Text(professional ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各个声音").tag(true) }.pickerStyle(.segmented)
+                    Picker("编辑视图", selection: $multiTrack) { Text(professional ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各条旋律").tag(true) }.pickerStyle(.segmented)
     }
     @ViewBuilder private var melodyContent: some View {
                     if multiTrack { trackList }
                     else {
-                        if professional {
-                        ScoreCanvas(notes: session.track.notes, bars: session.project.bars, selected: session.selectedNote, addMode: addMode,
+                        if showScore {
+                        ScoreCanvas(notes: session.track.notes, bars: session.project.bars, freeRhythm: session.project.freeRhythm, selected: session.selectedNote, addMode: addMode,
                                     onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveNote)
                         } else {
                             MelodyCanvas(notes: session.track.notes, beats: session.project.beats, selected: session.selectedNote, addMode: addMode, onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveMelodyNote)
                         }
-                        if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : "点击音符修改 · 上下拖动调整谱位\n黄色轮廓提示识别不确定").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                        if professional { Text(addMode ? "添加模式：点击谱面空白处放置音符。" : session.project.freeRhythm ? "保留原始演唱时长 · 简化参考谱，未强行量化\n问号标记建议对照原声校正" : "点击音符修改 · 上下拖动调整谱位\n问号标记建议对照原声校正").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                     }
     }
     private var editingTools: some View {
@@ -128,13 +142,14 @@ import UniformTypeIdentifiers
         if !simpleMode {
             Button { addMode.toggle() } label: { Label(addMode ? "完成添加" : "添加", systemImage: addMode ? "checkmark" : "plus").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.addNote")
             Menu {
-                Button(professional ? "添加声部" : "添加声音", systemImage: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
+                Button(professional ? "添加声部" : "添加一条旋律", systemImage: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
+                Button(showScore ? "切换为旋律高低图" : "显示参考五线谱", systemImage: "music.note.list") { notationPreference = !showScore; multiTrack = false }
                 Button("按选项添加声音", systemImage: "plus.circle") { noteEntry = true }.accessibilityIdentifier("editor.noteEntry")
                 if professional {
                     Button("复制主旋律为新轨道") { session.edit { p in var t = p.tracks[0]; t.id = UUID(); t.name += " · 副本"; t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; p.tracks.append(t) }; multiTrack = true }
                     Button("复制当前小节到结尾") { copyBar() }
                     Button("量化当前轨道") { let index = session.trackIndex; session.edit { p in for i in p.tracks[index].notes.indices { p.tracks[index].notes[i].start = (p.tracks[index].notes[i].start * 4).rounded() / 4; p.tracks[index].notes[i].duration = max(0.25, (p.tracks[index].notes[i].duration * 4).rounded() / 4) }; p.freeRhythm = false } }
-                    Button("发布作品") { publish = true }
+                    Button("分享音频") { startExport() }
                 }
                 if session.store.recordingURL(session.project, trackID: session.track.id) != nil {
                     Button("试听原始录音") { playSource(session.track.id) }
@@ -148,7 +163,7 @@ import UniformTypeIdentifiers
         .sheet(isPresented: $noteCorrection) {
             NavigationStack {
                 ScrollView { noteInspector.padding(20) }
-                    .navigationTitle(professional ? "音符校正" : "调整这个声音").navigationBarTitleDisplayMode(.inline)
+                    .navigationTitle(professional ? "音符校正" : "调整这个片段").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { noteCorrection = false } } }
             }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
@@ -168,7 +183,7 @@ import UniformTypeIdentifiers
         NavigationStack {
             List {
                 StartOption(title: professional ? "空白音轨" : "从头写旋律", subtitle: "独立写下一段新旋律", symbol: "music.note.list") { trackChoice = "blank"; addTrack = false }.accessibilityIdentifier("track.addBlank")
-                StartOption(title: "哼唱录制", subtitle: "录下新声音，再整理成可编辑旋律", symbol: "mic") { trackChoice = "record"; addTrack = false }.accessibilityIdentifier("track.addRecording")
+                StartOption(title: "录制旋律", subtitle: "录下新声音，再整理成可编辑旋律", symbol: "mic") { trackChoice = "record"; addTrack = false }.accessibilityIdentifier("track.addRecording")
                 StartOption(title: professional ? "导入音频或 MIDI" : "导入已有文件", subtitle: "保留原声，继续修改旋律", symbol: "square.and.arrow.down") { trackChoice = "import"; addTrack = false }.accessibilityIdentifier("track.addImport")
             }.navigationTitle(professional ? "添加声部" : "添加声音").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { addTrack = false } } }
@@ -183,28 +198,39 @@ import UniformTypeIdentifiers
     private var parameterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 14) {
             Text("4/4 拍").font(.subheadline).padding(12).background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-            Stepper("\(Int(session.project.bpm)) BPM", value: Binding(get: { Int(session.project.bpm) }, set: { bpm in audio.stopPlayback(); session.edit { $0.bpm = Double(bpm) } }), in: 30...300).fixedSize().font(.caption)
+            Stepper("\(Int(session.project.bpm)) BPM", value: Binding(get: { Int(session.project.bpm) }, set: { bpm in
+                audio.stopPlayback()
+                do { let reference = preserveTiming || session.project.tracks.contains { $0.useOriginalAudio == true }; let p = try MusicEdits.changingBPM(session.project, to: Double(bpm), preserveTime: reference); session.edit { $0 = p } }
+                catch { session.store.error = error.localizedDescription }
+            }), in: 30...300).fixedSize().font(.caption)
+            Menu {
+                Button("节拍参考：保持实际播放时间") { preserveTiming = true }
+                Button("改变乐器播放速度") { preserveTiming = false }.disabled(session.project.tracks.contains { $0.useOriginalAudio == true })
+                Text("含原声时只调整节拍参考，不拉伸录音，也不改变播放速度。参考谱按实音记写，调号当前仅作项目标记；整体升降请用换个调。")
+            } label: { Image(systemName: "info.circle").frame(width: 44, height: 44) }.accessibilityLabel("节拍参考与播放速度说明")
             Picker("调号", selection: Binding(get: { session.project.key }, set: { key in session.edit { $0.key = key } })) { ForEach(["C", "G", "D", "A", "F", "B♭"], id: \.self) { Text($0).tag($0) } }.pickerStyle(.menu)
             if session.project.freeRhythm { Text("自由节奏 · 未量化").font(.caption2).foregroundStyle(Palette.gold) }
         }.frame(minHeight: 44) }
     }
     private var playbackBar: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             MusicGlassGroup {
-                HStack(spacing: 12) {
-                    if professional {
-                        Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 32, height: 44) }.musicAction().accessibilityLabel("回到起点")
-                    }
-                    Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused).frame(width: 44, height: 44) }.musicAction(prominent: true).accessibilityLabel("播放或暂停")
-                    Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.keyShift")
-                    if professional {
-                        Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").frame(width: 32, height: 44) }.musicAction().accessibilityLabel(loop ? "关闭循环" : "开启循环").accessibilityAddTraits(loop ? .isSelected : [])
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { if professional { restartAction }; playAction; shiftAction; if professional { loopAction } }.fixedSize(horizontal: true, vertical: false)
+                    VStack(spacing: 8) { HStack(spacing: 12) { playAction; shiftAction }; if professional { HStack(spacing: 12) { restartAction; loopAction } } }
                 }
             }
             Text(musicTime(audio.playbackSeconds) + " / " + musicTime(session.project.seconds)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity)
     }
+    private var restartAction: some View { Button { audio.stopPlayback() } label: { Image(systemName: "backward.end").frame(width: 32, height: 44) }.musicAction().accessibilityLabel("回到起点") }
+    private var playAction: some View {
+        Button { Task { do { try await audio.play(session.project, recordingDirectory: session.store.recordingDirectory, loop: loop) } catch { session.store.error = error.localizedDescription } } } label: {
+            Group { if audio.renderingID == session.project.id { ProgressView() } else { PlaybackGlyph(playing: audio.playingID == session.project.id && !audio.paused) } }.frame(width: 44, height: 44)
+        }.musicAction(prominent: true).accessibilityLabel(audio.renderingID == session.project.id ? "取消试听准备" : audio.playingID == session.project.id && !audio.paused ? "暂停" : "播放")
+    }
+    private var shiftAction: some View { Button { audio.stopPlayback(); transpose = true } label: { Label("换个调", systemImage: "arrow.up.arrow.down").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.keyShift") }
+    private var loopAction: some View { Button { loop.toggle(); audio.stopPlayback() } label: { Image(systemName: "repeat").frame(width: 32, height: 44) }.musicAction().accessibilityLabel(loop ? "关闭循环" : "开启循环").accessibilityAddTraits(loop ? .isSelected : []) }
     private func moveMelodyNote(_ id: UUID, _ steps: Int) {
         guard steps != 0 else { return }
         session.selectedNote = id; audio.stopPlayback()
@@ -220,7 +246,7 @@ import UniformTypeIdentifiers
                 Button("低一点") { session.editNote { if let pitch = $0.midi { $0.midi = max(0, pitch - 1); $0.confidence = 1 } } }.frame(minHeight: 44)
                 Button("高一点") { session.editNote { if let pitch = $0.midi { $0.midi = min(127, pitch + 1); $0.confidence = 1 } } }.frame(minHeight: 44)
                 Spacer()
-                Button { if let midi = session.selected?.midi { Task { do { try await audio.preview(session.track.instrument, midi: midi) } catch { session.store.error = error.localizedDescription } } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.accessibilityLabel("听这个声音")
+                Button { if let midi = session.selected?.midi { Task { do { try await audio.preview(session.track.instrument, midi: midi) } catch { session.store.error = error.localizedDescription } } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.accessibilityLabel("试听这个片段")
             }.buttonStyle(.bordered)
             if standard {
                 HStack { Button("短一点") { session.editNote { $0.duration = max(0.125, $0.duration / 2) } }; Button("长一点") { session.editNote { $0.duration = min(32, $0.duration * 2) } }; Spacer(); Button("删除", role: .destructive) { session.deleteNote() } }.frame(minHeight: 44)
@@ -228,7 +254,7 @@ import UniformTypeIdentifiers
                 if let note = session.selected, let url = session.store.noteRecordingURL(session.project, trackID: session.track.id, note: note) {
                     Button("听对应的原录音") { do { try audio.playOriginal(url, from: MusicEdits.originalStart(note, track: session.track, bpm: session.project.bpm), length: note.rawDuration ?? note.duration * 60 / session.project.bpm) } catch { session.store.error = error.localizedDescription } }.frame(minHeight: 44)
                 }
-            } else { Button("删除这个声音", role: .destructive) { session.deleteNote() }.frame(minHeight: 44) }
+            } else { Button("删除这个片段", role: .destructive) { session.deleteNote() }.frame(minHeight: 44) }
         }
     }
     private var professionalInspector: some View {
@@ -290,40 +316,71 @@ import UniformTypeIdentifiers
             else {
                 let chosen = p.tracks[t].notes.filter { scope == "选中音符" ? $0.id == selected : $0.start >= Double(start - 1) * 4 && $0.start < Double(end) * 4 }
                 guard !chosen.isEmpty else { return }
-                let pieces = MusicEdits.partition(p.tracks[t], ids: Set(chosen.map(\.id)), name: scope == "选中音符" ? "选中的声音" : "第 \(start)–\(end) 小节")
+                let pieces = MusicEdits.partition(p.tracks[t], ids: Set(chosen.map(\.id)), name: scope == "选中音符" ? "选中的片段" : "第 \(start)–\(end) 小节")
                 p.tracks[t] = pieces.0
                 var part = pieces.1; part.instrument = instrument; part.assignment = "移动原轨音符 · \(scope) · \(start)–\(end) 小节"
                 p.tracks.append(part)
             }
-        }; instruments = false
-    }
-    private func exportProject() { do { share = ShareItem(url: try session.store.package(session.project)) } catch { session.store.error = error.localizedDescription } }
-    private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
-    private func exportWAV() async {
-        processing = true; stage = "正在生成可以播放的音频…"; defer { processing = false }; let p = session.project, recordingRoot = session.store.recordingDirectory
-        do { let data = try await AudioRenderer.render(p, recordingDirectory: recordingRoot); let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".wav"); try data.write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription }
-    }
-    private func analyzeOriginal() {
-        let track = session.track
-        guard let url = session.store.recordingURL(session.project, trackID: track.id) else { return }
-        processing = true; stage = professional ? "正在使用 " + RecognitionSettings.load().engine.title + " 识谱…" : "正在分析这段录音，整理旋律…"
-        let bpm = session.project.bpm, free = session.project.freeRhythm
-        analysis = Task {
-            do {
-                let result = try await RecognitionService.analyze(url: url, bpm: bpm, free: free, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity)
-                try Task.checkCancellation()
-                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) {
-                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += track.sourceStartBeat ?? 0; n.sourceFile = track.recordingFile; return n }
-                    p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.tracks[i].useOriginalAudio = false
-                } }
-            } catch { if !Task.isCancelled { session.store.error = error.localizedDescription } }
-            processing = false; analysis = nil
         }
+        if scope != "整条轨道", let last = session.project.tracks.last { selectTrack(last.id); multiTrack = true }
+        instruments = false
+    }
+    private func exportProject() {
+        guard !processing else { return }
+        exportTask = Task {
+            let identity = UUID(); exportIdentity = identity; processing = true; stage = "正在整理完整项目备份…"
+            defer { if exportIdentity == identity { processing = false; exportTask = nil } }
+            do {
+                let url = try await session.store.packageAsync(session.project, preferRecovery: false)
+                guard !Task.isCancelled, exportIdentity == identity, workspaceVisible else { try? FileManager.default.removeItem(at: url); return }
+                share = ShareItem(url: url)
+            } catch { if !Task.isCancelled && exportIdentity == identity { session.store.error = error.localizedDescription } }
+        }
+    }
+    private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
+    private func startExport() {
+        guard !processing else { return }
+        exportTask = Task { await exportWAV() }
+    }
+    private func cancelExport() { exportIdentity = UUID(); exportTask?.cancel(); exportTask = nil; if activeTicket == nil { processing = false } }
+    private func exportWAV() async {
+        let identity = UUID(); exportIdentity = identity
+        processing = true; stage = "正在分段生成可以播放的音频…"
+        let p = session.project, recordingRoot = session.store.recordingDirectory
+        defer { if identity == exportIdentity { processing = false; exportTask = nil } }
+        do {
+            let url = try await AudioRenderer.renderFile(p, recordingDirectory: recordingRoot)
+            guard !Task.isCancelled, identity == exportIdentity, workspaceVisible else { try? FileManager.default.removeItem(at: url); return }
+            share = ShareItem(url: url)
+        } catch { if !Task.isCancelled && identity == exportIdentity { session.store.error = error.localizedDescription } }
+    }
+    private func cancelAnalysis() {
+        if let ticket = activeTicket { session.cancelAnalysis(ticket) }
+        activeTicket = nil; analysis?.cancel(); analysis = nil; processing = false
+    }
+    private func analyzeOriginal() { startAnalysis(speechOnly: false) }
+    private func startAnalysis(speechOnly: Bool) {
+        cancelAnalysis()
+        let settings = RecognitionSettings.load(), track = session.track
+        guard let url = session.store.recordingURL(session.project, trackID: track.id) else { return }
+        do {
+            let ticket = try session.beginAnalysis(trackID: track.id); activeTicket = ticket
+            processing = true
+            stage = settings.engine == .cloud || speechOnly ? "正在发送所选原声至 \((try? settings.endpoint().host) ?? "你的模型服务")…" : "正在分析这段录音，整理旋律…"
+            analysis = Task {
+                do {
+                    let result = try await RecognitionService.analyze(url: url, bpm: ticket.bpm, free: ticket.freeRhythm, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity, settings: settings, speechOnly: speechOnly)
+                    try Task.checkCancellation()
+                    _ = session.finishAnalysis(ticket, result: result, engine: settings.engine.title, transcriptOnly: speechOnly)
+                } catch { if !Task.isCancelled && activeTicket?.id == ticket.id { session.store.error = error.localizedDescription } }
+                if activeTicket?.id == ticket.id { processing = false; activeTicket = nil; analysis = nil }
+            }
+        } catch { session.store.error = error.localizedDescription }
     }
     private func selectTrack(_ id: UUID) { if let i = session.project.tracks.firstIndex(where: { $0.id == id }) { session.trackIndex = i; session.selectedNote = nil } }
     @discardableResult private func createTrack() -> UUID? {
         guard session.project.tracks.count < 128 else { session.store.error = "一个项目最多支持 128 条音轨。"; return nil }
-        audio.stopPlayback(); let track = MusicTrack(name: professional ? "新声部 \(session.project.tracks.count + 1)" : "声音 \(session.project.tracks.count + 1)")
+        audio.stopPlayback(); let track = MusicTrack(name: professional ? "新声部 \(session.project.tracks.count + 1)" : "旋律 \(session.project.tracks.count + 1)")
         session.edit { $0.tracks.append(track) }; selectTrack(track.id); multiTrack = true; return track.id
     }
     private func requestRecording(_ id: UUID) {
@@ -331,7 +388,7 @@ import UniformTypeIdentifiers
         else { openRecording(id) }
     }
     private func openRecording(_ id: UUID) { audio.stopPlayback(); recording = TrackRecordingRoute(id: id, project: session.project) }
-    private func acceptRecording(_ project: MusicProject) { session.edit { $0 = project }; session.selectedNote = nil; multiTrack = true }
+    private func acceptRecording(_ project: MusicProject) { session.acceptRecording(project); session.selectedNote = nil; multiTrack = true }
     private func playSource(_ id: UUID) {
         if let track = session.project.tracks.first(where: { $0.id == id }), let url = session.store.recordingURL(session.project, trackID: id) {
             do { try audio.playOriginal(url, from: track.trimStart ?? 0, length: track.recordingSeconds.map { max(0, (track.trimEnd ?? $0) - (track.trimStart ?? 0)) }) } catch { session.store.error = error.localizedDescription }
@@ -344,92 +401,38 @@ import UniformTypeIdentifiers
         do {
             guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 256 * 1024 * 1024 else { throw MusicError.tooLarge }
             if ["mid", "midi"].contains(url.pathExtension.lowercased()) {
-                let imported = try MIDI.parse(Data(contentsOf: url)); guard let first = imported.tracks.first else { throw MusicError.invalidMIDI }
+                var imported = try MIDI.parse(Data(contentsOf: url)); let ratio = session.project.bpm / imported.bpm; for t in imported.tracks.indices { for n in imported.tracks[t].notes.indices { imported.tracks[t].notes[n].start *= ratio; imported.tracks[t].notes[n].duration *= ratio } }; guard let first = imported.tracks.first else { throw MusicError.invalidMIDI }
                 guard session.project.tracks.count + imported.tracks.count - 1 <= 128 else { throw MusicError.tooLarge }
-                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { let offset = p.tracks[i].sourceStartBeat ?? 0; p.tracks[i].notes += first.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].instrument = first.instrument; p.tracks[i].recognitionSource = "MIDI 导入 · 使用项目节拍" }; p.tracks.append(contentsOf: imported.tracks.dropFirst()) }
+                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) { let offset = p.tracks[i].sourceStartBeat ?? 0; p.tracks[i].notes += first.notes.map { var n = $0; n.start += offset; return n }; p.tracks[i].instrument = first.instrument; p.tracks[i].recognitionSource = "MIDI 导入 · 保留实际播放时间，不吸附网格" }; p.tracks.append(contentsOf: imported.tracks.dropFirst()) }
                 return
             }
             let prepared = try await AudioImport.prepare(url, directory: session.store.recordingDirectory)
+            guard workspaceVisible, session.project.tracks.contains(where: { $0.id == id }) else { prepared.discard(); return }
             var committed = false; defer { if !committed { prepared.discard() } }
             let name = prepared.name, target = prepared.url
             guard session.edit({ p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
-                MusicEdits.attachOriginal(&p.tracks[i], file: name, duration: prepared.duration)
+                MusicEdits.attachOriginal(&p.tracks[i], file: name, duration: prepared.duration); p.freeRhythm = true
             } }) else { throw MusicError.invalidProject }
             committed = true
             stage = "原声已保存，正在生成候选乐谱…"
             do {
-                let result = try await RecognitionService.analyze(url: target, bpm: session.project.bpm, free: true)
+                let ticket = try session.beginAnalysis(trackID: id), settings = RecognitionSettings.load()
+                defer { session.cancelAnalysis(ticket) }
+                let result = try await RecognitionService.analyze(url: target, bpm: ticket.bpm, free: true, settings: settings)
                 try Task.checkCancellation()
-                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == id }) {
-                    let offset = p.tracks[i].sourceStartBeat ?? 0
-                    p.tracks[i].notes = result.notes.map { var n = $0; n.start += offset; n.sourceFile = name; return n }; p.tracks[i].transcript = result.transcript; p.tracks[i].recognitionSource = RecognitionSettings.load().engine.title; p.freeRhythm = true
-                } }
+                _ = session.finishAnalysis(ticket, result: result, engine: settings.engine.title)
             } catch { session.store.error = "原声已保留，可以独立回放、裁剪或手动写谱。识谱未完成：" + error.localizedDescription }
             selectTrack(id); multiTrack = true
         } catch { session.store.error = error.localizedDescription }
     }
     private func transcribeSpeech() {
-        guard let url = session.store.recordingURL(session.project, trackID: session.track.id) else { return }
         let settings = RecognitionSettings.load()
-        guard !settings.model.isEmpty, (try? ModelKeychain.read().isEmpty) == false else { modelSettings = true; return }
-        let track = session.track; processing = true; stage = "正在把所选原声发送给你的模型识别文字…"
-        analysis = Task {
-            do {
-                let result = try await RecognitionService.analyze(url: url, bpm: session.project.bpm, free: true, start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity, settings: settings, speechOnly: true)
-                try Task.checkCancellation()
-                session.edit { p in if let i = p.tracks.firstIndex(where: { $0.id == track.id }) { p.tracks[i].transcript = result.transcript } }
-                if result.transcript?.isEmpty != false { session.store.error = "模型未返回清晰文字。当前音符和原声仍保留。" }
-            } catch { if !Task.isCancelled { session.store.error = error.localizedDescription } }
-            processing = false; analysis = nil
-        }
+        guard !settings.model.isEmpty, (try? ModelKeychain.read(for: settings).isEmpty) == false else { modelSettings = true; return }
+        startAnalysis(speechOnly: true)
     }
 
 }
 
-struct ScoreCanvas: View {
-    var notes: [MusicNote]; var bars: Int; var selected: UUID?; var addMode: Bool
-    var onSelect: (UUID) -> Void; var onAdd: (Int, Double) -> Void; var onMove: (UUID, Int) -> Void
-    private var width: CGFloat { max(800, CGFloat(bars) * 210 + 100) }
-    private func basePoint(_ note: MusicNote) -> CGPoint { CGPoint(x: 120 + note.start * 52.5, y: ScoreGeometry.rawY(note)) }
-    private var verticalOffset: CGFloat { ScoreGeometry(notes: notes).offset }
-    private var height: CGFloat { ScoreGeometry(notes: notes).height }
-    private func point(_ note: MusicNote) -> CGPoint { let base = basePoint(note); return CGPoint(x: base.x, y: base.y + verticalOffset) }
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            ZStack(alignment: .topLeading) {
-                Canvas { context, size in
-                    context.translateBy(x: 0, y: verticalOffset)
-                    var lines = Path(); for i in 0..<5 { let y = CGFloat(80 + i * 12); lines.move(to: CGPoint(x: 20, y: y)); lines.addLine(to: CGPoint(x: size.width - 20, y: y)) }; context.stroke(lines, with: .color(.gray.opacity(0.7)), lineWidth: 0.8)
-                    context.draw(Text("𝄞").font(.system(size: 67)).foregroundStyle(Palette.ink), at: CGPoint(x: 49, y: 107))
-                    context.draw(Text("4\n4").font(.system(size: 19)).foregroundStyle(Palette.ink), at: CGPoint(x: 87, y: 103))
-                    for bar in 0..<max(3, bars) {
-                        let x = CGFloat(110 + bar * 210); var line = Path(); line.move(to: CGPoint(x: x, y: 80)); line.addLine(to: CGPoint(x: x, y: 128)); context.stroke(line, with: .color(.gray), lineWidth: 0.7)
-                        context.draw(Text("\(bar + 1)").font(.system(size: 11)).foregroundStyle(.gray), at: CGPoint(x: x + 8, y: 57))
-                    }
-                    for note in notes {
-                        let p = basePoint(note), color = note.id == selected ? Color(red: 0.64, green: 0.5, blue: 0.12) : Palette.ink
-                        let appearance = NoteNotation(duration: note.duration)
-                        if note.midi == nil { context.draw(Text(appearance.rest).font(.system(size: 30)).foregroundStyle(color), at: CGPoint(x: p.x, y: 104)); if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: 100, width: 4, height: 4)), with: .color(color)) }; continue }
-                        if p.y > 128 { for y in stride(from: CGFloat(140), through: p.y + 2, by: 12) { var ledger = Path(); ledger.move(to: CGPoint(x: p.x - 12, y: y)); ledger.addLine(to: CGPoint(x: p.x + 12, y: y)); context.stroke(ledger, with: .color(color), lineWidth: 1) } }
-                        if p.y < 80 { for y in stride(from: CGFloat(68), through: p.y - 2, by: -12) { var ledger = Path(); ledger.move(to: CGPoint(x: p.x - 12, y: y)); ledger.addLine(to: CGPoint(x: p.x + 12, y: y)); context.stroke(ledger, with: .color(color), lineWidth: 1) } }
-                        let ellipse = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 5, width: 14, height: 10)); if appearance.filled { context.fill(ellipse, with: .color(color)) } else { context.stroke(ellipse, with: .color(color), lineWidth: 1.7) }
-                        if appearance.stem { var stem = Path(); stem.move(to: CGPoint(x: p.x + 6, y: p.y)); stem.addLine(to: CGPoint(x: p.x + 6, y: p.y - 32)); context.stroke(stem, with: .color(color), lineWidth: 1.5) }
-                        for level in 0..<appearance.flags {
-                            let top = p.y - 32 + CGFloat(level) * 7
-                            var flag = Path(); flag.move(to: CGPoint(x: p.x + 6, y: top)); flag.addQuadCurve(to: CGPoint(x: p.x + 7, y: top + 22), control: CGPoint(x: p.x + 25, y: top + 11)); context.stroke(flag, with: .color(color), lineWidth: 1.7)
-                        }
-                        if [1, 3, 6, 8, 10].contains((note.midi ?? 0) % 12) { context.draw(Text("♯").font(.system(size: 19)).foregroundStyle(color), at: CGPoint(x: p.x - 18, y: p.y)) }
-                        if appearance.dotted { context.fill(Path(ellipseIn: CGRect(x: p.x + 12, y: p.y - 4, width: 4, height: 4)), with: .color(color)) }
-                        if note.confidence < 0.8 { context.stroke(Path(ellipseIn: CGRect(x: p.x - 13, y: p.y - 11, width: 26, height: 22)), with: .color(Color(red: 0.74, green: 0.59, blue: 0.19)), lineWidth: 2) }
-                        if note.tied { var tie = Path(); tie.move(to: CGPoint(x: p.x + 8, y: p.y + 12)); tie.addQuadCurve(to: CGPoint(x: min(size.width - 25, p.x + CGFloat(note.duration) * 52.5), y: p.y + 12), control: CGPoint(x: p.x + CGFloat(note.duration) * 26, y: p.y + 30)); context.stroke(tie, with: .color(color), lineWidth: 1.4) }
-                    }
-                }
-                if addMode { Color.clear.contentShape(Rectangle()).gesture(SpatialTapGesture().onEnded { value in let beat = max(0, ((Double(value.location.x) - 120) / 52.5 * 4).rounded() / 4), position = max(0, min(74, Int(((128 + verticalOffset - value.location.y) / 6).rounded()) + 37)), midi = position / 7 * 12 + [0, 2, 4, 5, 7, 9, 11][position % 7]; onAdd(min(127, midi), beat) }) }
-                ForEach(notes) { note in let p = point(note); Button { onSelect(note.id) } label: { Color.clear.frame(width: 44, height: 44).contentShape(Rectangle()) }.position(p).accessibilityLabel("\(note.pitchName)，\(note.duration.formatted()) 拍").accessibilitySortPriority(-note.start).accessibilityAdjustableAction { direction in if direction == .increment { onMove(note.id, 1) }; if direction == .decrement { onMove(note.id, -1) } }.simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in let steps = Int((-value.translation.height / 6).rounded()); if steps != 0 { onMove(note.id, steps) } }) }
-            }.frame(width: width, height: height).padding(.vertical, 8)
-        }.background(Color(red: 0.92, green: 0.9, blue: 0.86), in: RoundedRectangle(cornerRadius: 20)).clipShape(RoundedRectangle(cornerRadius: 20))
-    }
-}
 struct PianoRoll: View {
     var notes: [MusicNote]; var beats: Double
     var body: some View { Canvas { context, size in
@@ -451,15 +454,15 @@ struct InstrumentSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { Text(professional ? "三种内置合成音色 · 离线可用 · 无采样素材" : "选择一种声音，先听听，再用到你的旋律里。无需联网。").font(.caption).foregroundStyle(.secondary) }
+                Section { Text(professional ? "三种内置合成音色 · 离线可用 · 无采样素材" : "三种内置乐器为合成音色，可先试听，离线使用。").font(.caption).foregroundStyle(.secondary) }
                 ForEach(Instrument.allCases.filter { search.isEmpty || $0.name.contains(search) || $0.category.contains(search) }) { instrument in
                     HStack(spacing: 14) { Image(systemName: instrument.symbol).font(.title2).foregroundStyle(Palette.gold).frame(width: 34); VStack(alignment: .leading, spacing: 6) { Text(instrument.name).font(.headline); Text("\(instrument.category) · 已内置").font(.caption).foregroundStyle(.secondary) }; Spacer(); Button { Task { do { try await audio.preview(instrument) } catch { store.error = error.localizedDescription } } } label: { Image(systemName: "play").frame(width: 44, height: 44) }.buttonStyle(.borderless).accessibilityLabel("试听 \(instrument.name)"); if let onApply { Button(current == instrument && scope == "整条轨道" ? "已应用" : "应用") { onApply(instrument, scope, start, max(start, end)); dismiss() }.buttonStyle(.borderless).frame(minHeight: 44) } }
                 }
                 if onApply != nil {
                     Section("应用范围") {
-                        Picker("范围", selection: $scope) { Text(professional ? "整条轨道" : "整段旋律").tag("整条轨道"); if selectedNote { Text(professional ? "选中音符" : "选中的声音").tag("选中音符") }; if professional { Text("指定小节").tag("指定小节") } }
+                        Picker("范围", selection: $scope) { Text(professional ? "整条轨道" : "整段旋律").tag("整条轨道"); if selectedNote { Text(professional ? "选中音符" : "选中的片段").tag("选中音符") }; if professional { Text("指定小节").tag("指定小节") } }
                         if scope == "指定小节" { Stepper("第 \(start) 小节起", value: $start, in: 1...max(1, bars)); Stepper("第 \(max(start, end)) 小节止", value: $end, in: 1...max(1, bars)) }
-                        Text(professional ? "分段应用会把对应音符移动到可见的新声部，保留具体配器范围。不会只修改全局乐器名称。" : "更换乐器不会改变旋律的高低和顺序。只更换选中的声音时，会把它单独列出来。").font(.caption).foregroundStyle(.secondary)
+                        Text(professional ? "分段应用会把对应音符移动到可见的新声部，保留具体配器范围。不会只修改全局乐器名称。" : "更换乐器不改高低和节奏。只更换一部分时，会新建一条独立音轨并移入所选片段，可一次撤销。").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }.navigationTitle("乐器库").navigationBarTitleDisplayMode(.inline).searchable(text: $search, prompt: "搜索乐器")

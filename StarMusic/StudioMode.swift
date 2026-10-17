@@ -18,7 +18,8 @@ struct StudioModeMenu: View {
             Picker("创作模式", selection: $rawMode) {
                 ForEach(StudioMode.allCases) { mode in Text(mode.title + "模式").tag(mode.rawValue) }
             }
-            Text("切换模式保留音符、音轨与原始录音。")
+            ForEach(StudioMode.allCases) { mode in Text(mode.title + "：" + mode.detail) }
+            Text("切换只改变工具多少，不删除旋律、音轨或录音。")
         } label: {
             HStack(spacing: 5) { Text((StudioMode(rawValue: rawMode) ?? .standard).title + "模式"); Image(systemName: "chevron.down").font(.caption2) }
                 .font(.caption).frame(minHeight: 44)

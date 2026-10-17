@@ -76,8 +76,10 @@ struct MelodyCanvas: View {
                 .frame(width: max(44, frame.width), height: 44)
                 .contentShape(Rectangle())
         }.buttonStyle(.plain)
-            .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑").accessibilitySortPriority(-note.start)
-            .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { value in
+            .accessibilityLabel(note.confidence < 0.8 ? "旋律片段，建议校正" : "旋律片段，可编辑").accessibilityValue("音高 \(note.pitchName)，开始位置 \(note.start.formatted())，长度 \(note.duration.formatted())")
+            .accessibilityHint("轻点打开校正面板，可用按钮调整高低和长度").accessibilitySortPriority(-note.start)
+            .simultaneousGesture(DragGesture(minimumDistance: 16).onEnded { value in
+                guard abs(value.translation.height) > abs(value.translation.width) * 1.5 else { return }
                 let steps = Int((-Double(value.translation.height) / 140 * Double(high - low)).rounded())
                 onMove(note.id, steps)
             })
@@ -119,10 +121,10 @@ struct KeyShiftSheet: View {
                         Button { steps = min(24, steps + 1); audio.stopPlayback() } label: { Label("高一点", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 48) }.musicAction().accessibilityIdentifier("key.higher")
                     }
                     Text(professional ? "移调：\(steps) 个半音" : description).font(.headline).frame(maxWidth: .infinity).accessibilityIdentifier("key.height")
-                    Button("回到原来的高度") { steps = 0; audio.stopPlayback() }.frame(minHeight: 44)
+                    Button("重置本次换调") { steps = 0; audio.stopPlayback() }.frame(minHeight: 44)
                     Button(previewing ? "正在准备试听…" : "先听听") { Task { await preview() } }.frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.bordered).disabled(previewing).accessibilityIdentifier("key.preview")
                     if let error { Text(error).font(.caption).foregroundStyle(.secondary) }
-                } footer: { Text("整首一起升高或降低，节奏不变。原录音保留，试听使用乐器演奏。") }
+                } footer: { Text("调整各轨可编辑旋律，节奏不变；这些轨道改用乐器演奏。尚未转成音符的原声保持原来的高度。原录音保留，可撤销。") }
             }.navigationTitle("换个调").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", role: .cancel) { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("用这个调") { apply() }.accessibilityIdentifier("key.apply") } }
         }.onDisappear { audio.stopPlayback() }

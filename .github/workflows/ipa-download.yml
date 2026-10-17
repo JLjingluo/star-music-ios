@@ -101,6 +101,7 @@ jobs:
           NOTES
           UI_ASSETS=()
           while IFS= read -r -d '' file; do UI_ASSETS+=("$file"); done < <(find previews/ui-release -type f -print0)
+          if [ -f previews/StarMusic-Device-dSYM.zip ]; then UI_ASSETS+=(previews/StarMusic-Device-dSYM.zip); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" delivery/StarMusic-Unsigned.ipa IPA-CHECKSUM.txt previews/StarMusic-Home.png previews/StarMusic-Home-Light.png previews/StarMusic-Entrance.mp4 "${UI_ASSETS[@]}" --clobber
           else

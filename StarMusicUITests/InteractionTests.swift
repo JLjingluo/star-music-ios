@@ -52,7 +52,7 @@ final class InteractionTests: XCTestCase {
     func testTrackChooserModesAndModelConfiguration() {
         let app = launch(); blank(app); app.buttons["editor.toolsMenu"].tap(); app.buttons["editor.addTrack"].tap()
         XCTAssertTrue(app.buttons["track.addRecording"].waitForExistence(timeout: 5)); XCTAssertTrue(app.buttons["track.addImport"].exists); capture("Track-Chooser")
-        app.buttons["track.addBlank"].tap(); XCTAssertTrue(app.buttons["编辑 声音 2 的音符"].waitForExistence(timeout: 5)); capture("Tracks-Standard")
+        app.buttons["track.addBlank"].tap(); XCTAssertTrue(app.buttons["编辑 旋律 2 的音符"].waitForExistence(timeout: 5)); capture("Tracks-Standard")
         app.swipeDown(); mode("简洁模式", app)
         XCTAssertTrue(app.buttons["展开更多工具"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons["recognition.engine"].exists); capture("Tracks-Simple")
         app.swipeUp() // Reveal the whole control above the native bottom toolbar in the two-track view.
@@ -100,7 +100,7 @@ final class InteractionTests: XCTestCase {
         app.buttons["noteEntry.add"].tap()
         XCTAssertTrue(app.buttons["studio.modeMenu"].waitForExistence(timeout: 5))
         app.buttons.matching(NSPredicate(format: "label == %@", "旋律片段，可编辑")).firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["调整这个声音"].waitForExistence(timeout: 5)); capture("Note-Correction-Sheet")
+        XCTAssertTrue(app.navigationBars["调整这个片段"].waitForExistence(timeout: 5)); capture("Note-Correction-Sheet")
         app.buttons["完成"].tap(); app.swipeDown(); mode("专业模式", app)
         XCTAssertTrue(app.staticTexts["4/4 拍"].waitForExistence(timeout: 5)); capture("Score-Native-Professional")
     }
@@ -110,5 +110,33 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["作品详情"].waitForExistence(timeout: 5)); capture("Community-Detail")
         app.buttons["演示评论"].tap(); XCTAssertTrue(app.navigationBars["演示评论"].waitForExistence(timeout: 5)); capture("Comments-Sheet")
         app.buttons["完成"].tap(); back(app); XCTAssertTrue(app.navigationBars["社区"].waitForExistence(timeout: 5))
+    }
+    func testDenseScoreFontPaginationAndBottomControlsRemainSeparate() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-appearance", "light", "--ui-test-standard-mode", "--ui-test-dense-score", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let draft = app.buttons.containing(.staticText, identifier: "密集谱面回归").firstMatch
+        XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap(); mode("专业模式", app)
+        XCTAssertTrue(app.otherElements["editor.score"].waitForExistence(timeout: 8)); capture("Dense-Score-Light")
+        let next = app.buttons["score.next"]; if !next.isHittable { app.swipeUp() }; XCTAssertTrue(next.isHittable); next.tap()
+        XCTAssertTrue(app.staticTexts["参考谱 · 2 / 2"].waitForExistence(timeout: 5)); capture("Dense-Score-Next-Page")
+        app.swipeUp()
+        let tools = app.buttons["editor.toolsMenu"], key = app.buttons["editor.keyShift"]
+        XCTAssertTrue(tools.isHittable); XCTAssertTrue(key.isHittable)
+        XCTAssertLessThanOrEqual(tools.frame.maxY, key.frame.minY + 1, "Scrollable editing tools must stop above the pinned transport.")
+        capture("Editor-Bottom-No-Overlap")
+        UIDevice.current.orientation = .landscapeLeft
+        XCTAssertTrue(key.waitForExistence(timeout: 5)); capture("Dense-Score-Landscape")
+        UIDevice.current.orientation = .portrait
+    }
+    func testLargeTypeEditorKeepsExplicitToolsAndPlaybackReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-appearance", "dark", "--ui-test-standard-mode", "--ui-test-large-type", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch(); XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 10)); blank(app)
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["editor.keyShift"].isHittable)
+        XCTAssertTrue(app.buttons["editor.toolsMenu"].exists)
+        capture("Editor-Accessibility-Large-Type")
+        back(app)
     }
 }

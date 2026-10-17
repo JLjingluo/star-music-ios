@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,6 +74,8 @@ jobs:
           if [ -f artifacts/Native-Test-Provenance.json ]; then
             cp artifacts/Native-Test-Provenance.json artifacts/ui/
           fi
+      - name: Verify dense score and controls on iPad
+        run: python3 scripts/capture-tablet-preview.py
       - name: Build simulator app
         run: |
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
@@ -85,6 +87,8 @@ jobs:
           xcodebuild build -project StarMusic.xcodeproj -scheme StarMusic -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
           mkdir -p build/unsigned/Payload
           cp -R build/device/Build/Products/Release-iphoneos/StarMusic.app build/unsigned/Payload/
+          test -d build/device/Build/Products/Release-iphoneos/StarMusic.app.dSYM
+          ditto -c -k --keepParent build/device/Build/Products/Release-iphoneos/StarMusic.app.dSYM artifacts/StarMusic-Device-dSYM.zip
           cd build/unsigned
           zip -qr "$GITHUB_WORKSPACE/artifacts/StarMusic-Unsigned.ipa" Payload
       - name: Upload unsigned device IPA
@@ -103,6 +107,7 @@ jobs:
           name: StarMusic-Simulator
           path: |
             artifacts/StarMusic-Simulator.zip
+            artifacts/StarMusic-Device-dSYM.zip
             artifacts/StarMusic-Home*.png
             artifacts/StarMusic-Capture-Failure*.png
             artifacts/Simulator-Ready.png

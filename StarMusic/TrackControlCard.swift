@@ -43,7 +43,7 @@ struct TrackControlCard: View {
                 } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("\(track.name) 更多操作")
             }
             if !simple {
-                DisclosureGroup(professional ? "混音与原声" : "声音设置", isExpanded: $mixExpanded) {
+                DisclosureGroup(professional ? "混音与原声" : "音量与播放", isExpanded: $mixExpanded) {
                     mixControls.padding(.top, 12)
                 }.font(.subheadline)
             }
@@ -64,7 +64,7 @@ struct TrackControlCard: View {
     private var mixControls: some View {
         VStack(spacing: 12) {
             Toggle(professional ? "静音" : "暂时不播放", isOn: Binding(get: { track.muted }, set: { value in change { $0.muted = value } }))
-            Toggle(professional ? "独奏" : "只听这个声音", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } }))
+            Toggle(professional ? "独奏" : "只听这条旋律", isOn: Binding(get: { track.solo }, set: { value in change { $0.solo = value } }))
             HStack { Image(systemName: "speaker.wave.2"); Slider(value: $volume, in: 0...1) { editing in if !editing { change { $0.volume = volume } } } }.accessibilityLabel("\(track.name) 音量")
             PianoRoll(notes: track.notes, beats: beats).frame(height: 44)
             if hasSource {

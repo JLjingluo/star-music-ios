@@ -15,6 +15,12 @@ struct CreationHome: View {
 
     var body: some View {
         List {
+            if let message = store.recoveryMessage {
+                Section("找回的编辑") {
+                    Text(message).font(.caption)
+                    ForEach(Array(store.unsavedProjects.values).sorted { $0.updated > $1.updated }) { p in Button("继续恢复：" + p.name) { onOpen(p) } }
+                }
+            }
             Section {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("哼出旋律，\n写成自己的歌。")
@@ -50,7 +56,7 @@ struct CreationHome: View {
     private var creationSheet: some View {
         NavigationStack {
             List {
-                StartOption(title: "哼唱录制", subtitle: "录下旋律，自动整理成乐谱", symbol: "mic") { choose(.record) }.accessibilityIdentifier("start.record")
+                StartOption(title: "录制旋律", subtitle: "哼唱即可，录下后整理成可编辑旋律", symbol: "mic") { choose(.record) }.accessibilityIdentifier("start.record")
                 StartOption(title: "空白乐谱", subtitle: "从第一个声音开始写", symbol: "music.note.list") { choose(.blank) }.accessibilityIdentifier("start.blank")
                 StartOption(title: "导入文件", subtitle: "已有音频、旋律文件或项目备份", symbol: "square.and.arrow.down") { choose(.file) }.accessibilityIdentifier("start.import")
             }.navigationTitle("开始创作").navigationBarTitleDisplayMode(.inline)
@@ -129,7 +135,7 @@ struct DraftRow: View {
                 } label: { Label("更多操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(width: 44, height: 44) }.accessibilityLabel("草稿更多操作")
             }
         }.padding(.vertical, 4)
-        .confirmationDialog("移入最近删除？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("移入最近删除", role: .destructive) { audio.stopPlayback(); store.update(project) { $0.deleted = true } }; Button("取消", role: .cancel) {} } message: { Text("可以随时在最近删除中恢复这份草稿。") }
+        .confirmationDialog("移入最近删除？", isPresented: $confirmDelete, titleVisibility: .visible) { Button("移入最近删除", role: .destructive) { audio.stopPlayback(); store.update(project) { $0.deleted = true } }; Button("取消", role: .cancel) {} } message: { Text("最近删除不自动清空，仍占用本机空间。删除应用会移除这些草稿，请定期导出完整备份。") }
         .alert("重命名", isPresented: $rename) { TextField("名称", text: $name); Button("保存") { store.update(project) { $0.name = name.isEmpty ? "未命名的旋律" : String(name.prefix(60)) } }; Button("取消", role: .cancel) {} }
         .alert("移动到文件夹", isPresented: $move) { TextField("文件夹名称", text: $folder); Button("移动") { store.update(project) { $0.folder = folder.isEmpty ? "未分类" : String(folder.prefix(40)) } }; Button("取消", role: .cancel) {} }
         .sheet(item: $share) { ShareSheet(url: $0.url) }

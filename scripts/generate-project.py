@@ -24,7 +24,7 @@ model_file=obj('crepe-model','PBXFileReference','lastKnownFileType = folder.mlpa
 model_build=obj('crepe-build','PBXBuildFile',f'fileRef = {model_file};')
 build_ids.append(model_build)
 notice_ids=[];notice_builds=[]
-for filename in ['CREPE-LICENSE.txt','MODEL-MANIFEST.json']:
+for filename in ['CREPE-LICENSE.txt','MODEL-MANIFEST.json','Bravura.otf','Bravura-LICENSE.txt','FONT-MANIFEST.json']:
     ref=obj('resource:'+filename,'PBXFileReference',f'lastKnownFileType = text; path = Resources/{filename}; sourceTree = "<group>";')
     notice_ids.append(ref);notice_builds.append(obj('resourcebuild:'+filename,'PBXBuildFile',f'fileRef = {ref};'))
 launch_file=obj('launchfile','PBXFileReference','lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>";')
@@ -63,10 +63,11 @@ def configs(name,settings):
         merged=dict(settings)
         if name=='project':
             merged.update({'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if conf=='Debug' else '-O','DEBUG_INFORMATION_FORMAT':'dwarf' if conf=='Debug' else 'dwarf-with-dsym','ENABLE_TESTABILITY':'YES' if conf=='Debug' else 'NO'})
+            if conf=='Release':merged.update({'STRIP_INSTALLED_PRODUCT':'YES','COPY_PHASE_STRIP':'YES','STRIP_SWIFT_SYMBOLS':'YES'})
         body=' '.join(f'{q(k)} = {q(v)};' for k,v in merged.items())
         ids.append(obj(name+'-'+conf,'XCBuildConfiguration',f'buildSettings = {{ {body} }}; name = {conf};'))
     return obj(name+'-configs','XCConfigurationList',f'buildConfigurations = {refs(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
-base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','ENABLE_USER_SCRIPT_SANDBOXING':'YES','MARKETING_VERSION':'0.6.0','CURRENT_PROJECT_VERSION':'8','CODE_SIGN_STYLE':'Automatic','DEVELOPMENT_TEAM':''}
+base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','ENABLE_USER_SCRIPT_SANDBOXING':'YES','MARKETING_VERSION':'0.7.0','CURRENT_PROJECT_VERSION':'9','CODE_SIGN_STYLE':'Automatic','DEVELOPMENT_TEAM':''}
 project_configs=configs('project',base)
 app_configs=configs('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'music.star.starmusic','INFOPLIST_FILE':'StarMusic/Info.plist','GENERATE_INFOPLIST_FILE':'NO','TARGETED_DEVICE_FAMILY':'1,2','ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]':'StarMusic/Simulator.entitlements','CODE_SIGN_IDENTITY[sdk=iphonesimulator*]':'-'})
 test_configs=configs('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'music.star.starmusic.tests','GENERATE_INFOPLIST_FILE':'YES','TEST_HOST':'$(BUILT_PRODUCTS_DIR)/StarMusic.app/StarMusic','BUNDLE_LOADER':'$(TEST_HOST)','TARGETED_DEVICE_FAMILY':'1,2','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @loader_path/Frameworks'})

@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 import Combine
+import UIKit
 
 @MainActor final class AudioController: NSObject, ObservableObject, AVAudioPlayerDelegate {
     enum RecordingState: Equatable { case ready, recording, paused, finished }
@@ -12,7 +13,8 @@ import Combine
     @Published var interruptionMessage: String?
     @Published private(set) var paused = false
     @Published private(set) var renderingID: UUID?
-    private var rendering: Task<Data, Error>?
+    private var rendering: Task<URL, Error>?
+    private var playbackFile: URL?
     var metronomeBPM: Double?
     private var metronome: AVAudioPlayer?
     private var lastBeat = -1
@@ -52,13 +54,15 @@ import Combine
         if let player { playbackSeconds = player.currentTime;  }
     }
     func beginRecording(to url: URL) async throws {
-        guard recorder == nil && !requestingRecording else { throw MusicError.save("录音已经开始，请先完成当前录音") }
+        guard recorder == nil && !requestingRecording else { throw MusicError.operation("录音已经开始，请先完成当前录音") }
         requestingRecording = true; defer { requestingRecording = false }
         stopPlayback()
         let allowed = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
         }
         guard allowed else { throw MusicError.permission }
+        try Task.checkCancellation()
+        guard UIApplication.shared.applicationState == .active else { throw MusicError.operation("请回到应用前台后重新开始录音") }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
@@ -66,7 +70,7 @@ import Combine
                                      AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
         recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder?.isMeteringEnabled = true
-        guard recorder?.record(forDuration: 300) == true else { throw MusicError.save("无法启动录音") }
+        guard recorder?.record(forDuration: 300) == true else { recorder = nil; throw MusicError.operation("无法启动录音") }
         if metronomeBPM != nil {
             var click = [Float]()
             for sample in 0..<2000 {
@@ -79,17 +83,17 @@ import Combine
         }
         lastBeat = -1; elapsed = 0; levels = Array(repeating: 0, count: 64); recordingState = .recording
     }
-    func pauseRecording() { guard recordingState == .recording else { return }; recorder?.pause(); metronome?.stop(); recordingState = .paused }
+    func pauseRecording() { guard recordingState == .recording else { return }; elapsed = max(elapsed, recorder?.currentTime ?? 0); recorder?.pause(); metronome?.stop(); recordingState = .paused }
     func resumeRecording() throws {
         try AVAudioSession.sharedInstance().setActive(true)
-        guard recordingState == .paused, elapsed < 300, recorder?.record(forDuration: 300 - elapsed) == true else { throw MusicError.save("无法继续录音，请完成并整理这段旋律") }; recordingState = .recording
+        guard recordingState == .paused, elapsed < 300, recorder?.record(forDuration: 300 - elapsed) == true else { throw MusicError.operation("无法继续录音，请完成并整理这段旋律") }; recordingState = .recording
     }
     func finishRecording() { elapsed = max(elapsed, recorder?.currentTime ?? 0); recorder?.stop(); recorder = nil; metronome?.stop(); metronome = nil; recordingState = .finished; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
     func resetRecording() { finishRecording(); elapsed = 0; recordingState = .ready }
     func handleInterruption(_ message: String) { pauseRecording(); stopPlayback(); interruptionMessage = message }
     func play(_ project: MusicProject, recordingDirectory: URL? = nil, loop: Bool = false) async throws {
         if playingID == project.id, let player {
-            if paused { guard player.play() else { throw MusicError.save("无法继续试听") }; paused = false }
+            if paused { guard player.play() else { throw MusicError.operation("无法继续试听") }; paused = false }
             else { player.pause(); paused = true }
             return
         }
@@ -97,16 +101,17 @@ import Combine
         stopPlayback()
         let generation = playbackGeneration
         guard project.seconds <= 600 else { throw MusicError.tooLarge }
-        let worker = Task { try await AudioRenderer.render(project, recordingDirectory: recordingDirectory) }
+        let worker = Task { try await AudioRenderer.renderFile(project, recordingDirectory: recordingDirectory) }
         rendering = worker; renderingID = project.id
         defer { if generation == playbackGeneration { rendering = nil; renderingID = nil } }
-        let data: Data
-        do { data = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() }) }
+        let file: URL
+        do { file = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() }) }
         catch is CancellationError { return }
-        guard generation == playbackGeneration else { return }
+        guard generation == playbackGeneration else { try? FileManager.default.removeItem(at: file); return }
         try configurePlayback()
-        player = try AVAudioPlayer(data: data); player?.delegate = self; player?.numberOfLoops = loop ? -1 : 0
-        guard player?.play() == true else { throw MusicError.save("无法启动试听") }; playingID = project.id; playbackSeconds = 0; paused = false
+        playbackFile = file
+        player = try AVAudioPlayer(contentsOf: file); player?.delegate = self; player?.numberOfLoops = loop ? -1 : 0
+        guard player?.play() == true else { throw MusicError.operation("无法启动试听") }; playingID = project.id; playbackSeconds = 0; paused = false
     }
     nonisolated static func previewProject(_ instrument: Instrument, midi: Int? = nil) throws -> MusicProject {
         var p = MusicProject(); p.tracks[0].instrument = instrument; p.bpm = 120
@@ -124,7 +129,7 @@ import Combine
         if let length { Task { [weak self] in try? await Task.sleep(for: .seconds(length)); if self?.playbackGeneration == generation { self?.stopPlayback() } } }
     }
     func seek(to seconds: Double) { player?.currentTime = max(0, min(seconds, player?.duration ?? 0)); playbackSeconds = player?.currentTime ?? 0 }
-    func stopPlayback() { playbackGeneration += 1; rendering?.cancel(); rendering = nil; renderingID = nil; player?.stop(); player = nil; playingID = nil; playbackSeconds = 0; paused = false }
+    func stopPlayback() { playbackGeneration += 1; rendering?.cancel(); rendering = nil; renderingID = nil; player?.stop(); player = nil; if let playbackFile { try? FileManager.default.removeItem(at: playbackFile) }; playbackFile = nil; playingID = nil; playbackSeconds = 0; paused = false }
     func configurePlayback() throws { try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default); try AVAudioSession.sharedInstance().setActive(true) }
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { Task { @MainActor [weak self] in self?.playingID = nil; self?.paused = false; self?.playbackSeconds = 0 } }
     /// Decode bounded chunks directly into mono at the requested analysis/mix rate.
@@ -213,52 +218,81 @@ private actor AudioRenderQueue {
         try Task.checkCancellation()
         return try AudioRenderer.wav(project, recordingDirectory: recordingDirectory)
     }
+    func renderFile(_ project: MusicProject, recordingDirectory: URL?) throws -> URL {
+        try AudioRenderer.file(project, recordingDirectory: recordingDirectory)
+    }
 }
 
 enum AudioRenderer {
+    static func renderFile(_ project: MusicProject, recordingDirectory: URL? = nil) async throws -> URL {
+        try await AudioRenderQueue.shared.renderFile(project, recordingDirectory: recordingDirectory)
+    }
     static func render(_ project: MusicProject, recordingDirectory: URL? = nil) async throws -> Data {
         try await AudioRenderQueue.shared.render(project, recordingDirectory: recordingDirectory)
     }
     static func wav(_ project: MusicProject, recordingDirectory: URL? = nil) throws -> Data {
+        let url = try file(project, recordingDirectory: recordingDirectory)
+        defer { try? FileManager.default.removeItem(at: url) }
+        return try Data(contentsOf: url)
+    }
+    static func file(_ project: MusicProject, recordingDirectory: URL? = nil) throws -> URL {
         try Task.checkCancellation(); try project.validate()
         guard project.seconds <= 600 else { throw MusicError.tooLarge }
-        let sr = 44100.0, count = Int((project.seconds + 0.4) * sr)
-        var samples = [Float](repeating: 0, count: count)
+        let rate = 44100.0, count = Int((project.seconds + 0.4) * rate)
         let solo = project.tracks.contains { $0.solo }
-        for track in project.tracks where !track.muted && (!solo || track.solo) {
-            try Task.checkCancellation()
-            if track.useOriginalAudio == true {
-                let root = recordingDirectory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("StarMusic/Recordings", isDirectory: true)
-                guard let file = track.recordingFile else { throw MusicError.invalidProject }
-                let source = try AudioController.samples(from: root.appendingPathComponent(file), start: track.trimStart ?? 0, end: track.trimEnd ?? .infinity, outputRate: sr, maximumDuration: 600)
-                let offset = Int((track.sourceStartBeat ?? 0) * 60 / project.bpm * sr)
-                for i in source.samples.indices where i + offset < count {
-                    if i % 16384 == 0 { try Task.checkCancellation() }
-                    samples[i + offset] += source.samples[i] * Float(track.volume)
-                }
-                continue
-            }
-            for note in track.notes {
-                guard let midi = note.midi else { continue }
-                let start = Int(note.start * 60 / project.bpm * sr), length = Int(note.duration * 60 / project.bpm * sr)
-                let frequency = 440 * pow(2, Double(midi - 69) / 12)
-                let end = min(count, start + length + 6000)
-                guard start < end else { continue }
-                for frame in start..<end {
-                    if frame % 16384 == 0 { try Task.checkCancellation() }
-                    let t = Double(frame - start) / sr, phase = 2 * Double.pi * frequency * t
-                    let attack = min(1, t / 0.012), tail = frame - start > length ? exp(-Double(frame - start - length) / 1000) : 1
-                    let sound: Double
-                    switch track.instrument {
-                    case .piano: sound = (sin(phase) + 0.25 * sin(phase * 2) + 0.08 * sin(phase * 3)) * exp(-t * 2.3)
-                    case .guitar: sound = (sin(phase) + 0.32 * sin(phase * 2) + 0.17 * sin(phase * 3) + 0.1 * sin(phase * 4)) * exp(-t * 5)
-                    case .synth: sound = (sin(phase) + 0.45 * sin(phase * 1.004) + 0.1 * sin(phase * 2)) * 0.55
-                    }
-                    samples[frame] += Float(sound * attack * tail * track.volume * 0.28)
-                }
-            }
+        let tracks = project.tracks.filter { !$0.muted && (!solo || $0.solo) }
+        let root = recordingDirectory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("StarMusic/Recordings", isDirectory: true)
+        for track in tracks where track.useOriginalAudio == true {
+            guard let name = track.recordingFile, FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) else { throw MusicError.missingAudio(track.recordingFile ?? track.name) }
         }
-        return try encodePCM(samples, rate: 44100, cancellable: true)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        FileManager.default.createFile(atPath: output.path, contents: nil)
+        var complete = false; defer { if !complete { try? FileManager.default.removeItem(at: output) } }
+        let handle = try FileHandle(forWritingTo: output); defer { try? handle.close() }
+        var header = pcmWAV([], rate: 44100)
+        func set32(_ value: UInt32, _ at: Int) { var little = value.littleEndian; withUnsafeBytes(of: &little) { header.replaceSubrange(at..<(at + 4), with: $0) } }
+        set32(UInt32(36 + count * 2), 4); set32(UInt32(count * 2), 40); try handle.write(contentsOf: header)
+        // One second of mono Float32 plus its PCM output, independent of song length.
+        for first in stride(from: 0, to: count, by: 44100) {
+            try Task.checkCancellation()
+            let end = min(count, first + 44100)
+            var mix = [Float](repeating: 0, count: end - first)
+            for track in tracks {
+                if track.useOriginalAudio == true, let file = track.recordingFile {
+                    let offset = Int((track.sourceStartBeat ?? 0) * 60 / project.bpm * rate)
+                    let sourceLength = Int(track.sourceDuration * rate)
+                    let start = max(first, offset), stop = min(end, offset + sourceLength)
+                    guard stop > start else { continue }
+                    let from = (track.trimStart ?? 0) + Double(start - offset) / rate
+                    let to = min(track.trimEnd ?? track.recordingSeconds ?? .infinity, from + Double(stop - start) / rate)
+                    let source = try AudioController.samples(from: root.appendingPathComponent(file), start: from, end: to, outputRate: rate, maximumDuration: 600).samples
+                    for i in 0..<min(source.count, stop - start) { mix[start - first + i] += source[i] * Float(track.volume) }
+                    continue
+                }
+                for note in track.notes {
+                    guard let midi = note.midi else { continue }
+                    let start = Int(note.start * 60 / project.bpm * rate), length = Int(note.duration * 60 / project.bpm * rate)
+                    let low = max(first, start), high = min(end, start + length + 6000)
+                    guard low < high else { continue }
+                    let frequency = 440 * pow(2, Double(midi - 69) / 12)
+                    for frame in low..<high {
+                        if frame % 16384 == 0 { try Task.checkCancellation() }
+                        let t = Double(frame - start) / rate, phase = 2 * Double.pi * frequency * t
+                        let attack = min(1, t / 0.012), tail = frame - start > length ? exp(-Double(frame - start - length) / 1000) : 1
+                        let sound: Double
+                        switch track.instrument {
+                        case .piano: sound = (sin(phase) + 0.25 * sin(phase * 2) + 0.08 * sin(phase * 3)) * exp(-t * 2.3)
+                        case .guitar: sound = (sin(phase) + 0.32 * sin(phase * 2) + 0.17 * sin(phase * 3) + 0.1 * sin(phase * 4)) * exp(-t * 5)
+                        case .synth: sound = (sin(phase) + 0.45 * sin(phase * 1.004) + 0.1 * sin(phase * 2)) * 0.55
+                        }
+                        mix[frame - first] += Float(sound * attack * tail * track.volume * 0.28)
+                    }
+                }
+            }
+            let pcm = try encodePCM(mix, rate: 44100, cancellable: true)
+            try handle.write(contentsOf: pcm.dropFirst(44))
+        }
+        try handle.synchronize(); try handle.close(); complete = true; return output
     }
     static func pcmWAV(_ samples: [Float], rate: UInt32) -> Data {
         // Encoding small analysis/metronome buffers has no asynchronous job to cancel.
