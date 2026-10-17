@@ -2,6 +2,7 @@ import XCTest
 import AVFoundation
 import UIKit
 import CoreText
+import PDFKit
 @testable import StarMusic
 
 final class MusicTests: XCTestCase {
@@ -789,8 +790,15 @@ final class RevisionSafetyTests: XCTestCase {
         XCTAssertEqual(pages.flatMap { $0 }, notes)
         for page in pages.prefix(3) {
             let layout = ScoreLayout(notes: page)
-            for pair in zip(page, page.dropFirst()) { XCTAssertGreaterThanOrEqual(layout.x(pair.1) - layout.x(pair.0), 59.9) }
-            XCTAssertLessThan(layout.width, 2400)
+            for pair in zip(page, page.dropFirst()) { XCTAssertGreaterThanOrEqual(layout.x(pair.1) - layout.x(pair.0), 95.9) }
+            XCTAssertLessThan(layout.width, 3600)
+        }
+        let chord = [MusicNote(midi: 60, start: 0, duration: 0.0625), MusicNote(midi: 61, start: 0, duration: 0.0625), MusicNote(midi: 62, start: 0.01, duration: 0.0625)]
+        let chordLayout = ScoreLayout(notes: chord)
+        let positions = chord.map { chordLayout.x($0) }.sorted()
+        for pair in zip(positions, positions.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(pair.1 - pair.0, 95.9)
+            XCTAssertGreaterThan((pair.1 - 34) - (pair.0 + 42), 0, "Accidentals, flags, ties and uncertainty markers have separate horizontal envelopes even for adjacent staff positions.")
         }
         let crossing = [MusicNote(midi: 64, start: 3.96, duration: 0.04), MusicNote(midi: 65, start: 4.05, duration: 0.125)]
         let crossLayout = ScoreLayout(notes: crossing), bar = crossLayout.barX(beat: 4)
@@ -834,5 +842,35 @@ final class RevisionSafetyTests: XCTestCase {
             #"{"notes":[{"midi":60,"startSeconds":0,"durationSeconds":1,"confidence":2}]}"#
         ]
         for text in bad { XCTAssertThrowsError(try CloudRecognitionClient.decode(text, duration: 3, bpm: 120, free: true)) }
+    }
+}
+
+final class NumberedNotationTests: XCTestCase {
+    func testEveryPitchAndKeyHasLosslessNumberedPitchAndOctave() {
+        let scale = [0, 2, 4, 5, 7, 9, 11]
+        for (key, tonic) in ["C": 0, "G": 7, "D": 2, "A": 9, "F": 5, "B♭": 10] {
+            for midi in 0...127 {
+                let symbol = NumberedPitch(midi: midi, key: key)
+                XCTAssertEqual(60 + tonic + symbol.octave * 12 + scale[symbol.digit - 1] + (symbol.sharp ? 1 : 0), midi)
+            }
+        }
+        XCTAssertEqual(NumberedPitch(midi: 60, key: "C").plain, "1")
+        XCTAssertEqual(NumberedPitch(midi: 59, key: "C").plain, "7,")
+        XCTAssertEqual(NumberedPitch(midi: 72, key: "C").plain, "1'")
+        XCTAssertEqual(NumberedPitch(midi: nil, key: "C").text, "0")
+    }
+    func testNumberedPDFPaginatesAndTextRetainsActualTimesWithoutChangingProject() throws {
+        var p = MusicProject(); p.name = "简谱导出回归"; p.bpm = 120; p.freeRhythm = true
+        p.tracks[0].notes = (0..<26).map { MusicNote(midi: $0 == 0 ? nil : 60 + $0 % 12, start: Double($0) * 0.123, duration: 0.1875) }
+        let before = p
+        let text = NumberedScoreExport.text(p)
+        XCTAssertTrue(text.contains("1 = C")); XCTAssertTrue(text.contains("0.0615")); XCTAssertTrue(text.contains("0.0938"))
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try NumberedScoreExport.pdf(p, to: file)
+        let document = try XCTUnwrap(PDFDocument(url: file))
+        XCTAssertEqual(document.pageCount, 2)
+        XCTAssertTrue(try XCTUnwrap(document.page(at: 0)?.string).contains("1 = C"))
+        XCTAssertEqual(p, before, "Notation conversion/export must not quantize or replace editable music or originals.")
     }
 }

@@ -153,4 +153,22 @@ final class InteractionTests: XCTestCase {
         app.buttons["完成"].tap()
     }
 
+    func testNumberedNotationEditsSameNotesAndExportsPDF() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-appearance", "light", "--ui-test-standard-mode", "--ui-test-dense-score", "--ui-test-free-score", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let draft = app.buttons.containing(.staticText, identifier: "密集谱面回归").firstMatch
+        XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap()
+        app.buttons["editor.projectMenu"].tap(); app.buttons["editor.notationMenu"].tap(); app.buttons["notation.numbered"].tap()
+        XCTAssertTrue(app.otherElements["editor.numberedScore"].waitForExistence(timeout: 5)); capture("Numbered-Score-Light")
+        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "numbered.note.", "F3，")).firstMatch
+        XCTAssertTrue(note.isHittable)
+        let id = note.identifier, original = note.label
+        note.tap(); XCTAssertTrue(app.navigationBars["调整这个片段"].waitForExistence(timeout: 5))
+        app.buttons["高一点"].tap(); app.buttons["完成"].tap()
+        XCTAssertNotEqual(app.buttons[id].label, original)
+        app.buttons["保存与分享"].tap(); app.buttons["简谱 PDF"].tap()
+        XCTAssertTrue(app.otherElements["system.shareSheet"].waitForExistence(timeout: 15)); capture("Numbered-PDF-Native-Share")
+    }
+
 }

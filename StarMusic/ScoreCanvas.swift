@@ -4,6 +4,9 @@ import CoreText
 /// Display spacing is independent of musical time. At most 32 notes are drawn in
 /// one page, so a dense or very long project never creates a giant backing canvas.
 struct ScoreLayout {
+    // Leave room for an accidental on the left, flags on the right and a
+    // separate uncertainty marker, even when neighbouring pitches are close.
+    static let noteSpacing: CGFloat = 96
     let notes: [MusicNote]
     let firstBeat: Double
     let lastBeat: Double
@@ -23,13 +26,13 @@ struct ScoreLayout {
         var points: [UUID: CGFloat] = [:], values: [(Double, CGFloat)] = [], cursor: CGFloat = 132
         var previous = firstBeat
         for onset in Set(notes.map(\.start)).sorted() {
-            let minimum: CGFloat = values.isEmpty ? 0 : floor(onset / 4) > floor(previous / 4) ? 84 : 60
+            let minimum: CGFloat = values.isEmpty ? 0 : floor(onset / 4) > floor(previous / 4) ? 120 : Self.noteSpacing
             cursor += max(minimum, min(240, CGFloat(onset - previous) * 44))
             values.append((onset, cursor))
             // Even exact simultaneous/duplicated notes get distinct hit targets.
             let chord = notes.filter { $0.start == onset }.sorted { $0.staffPosition < $1.staffPosition }
-            for (i, note) in chord.enumerated() { points[note.id] = cursor + CGFloat(i) * 44 }
-            cursor += CGFloat(max(0, chord.count - 1)) * 44
+            for (i, note) in chord.enumerated() { points[note.id] = cursor + CGFloat(i) * Self.noteSpacing }
+            cursor += CGFloat(max(0, chord.count - 1)) * Self.noteSpacing
             previous = onset
         }
         anchors = values; positions = points

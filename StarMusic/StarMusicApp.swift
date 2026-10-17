@@ -73,7 +73,11 @@ struct GoldButton: View {
 }
 struct ShareSheet: UIViewControllerRepresentable {
     var url: URL
-    func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: [url], applicationActivities: nil) }
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.view.accessibilityIdentifier = "system.shareSheet"
+        return controller
+    }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 struct ShareItem: Identifiable { let id = UUID(); let url: URL }

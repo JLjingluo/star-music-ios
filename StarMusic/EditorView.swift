@@ -9,8 +9,10 @@ import UniformTypeIdentifiers
     @StateObject private var session: EditorSession
     @State private var addMode = false
     @State private var multiTrack = false
-    @State private var notationPreference: Bool?
-    private var showScore: Bool { notationPreference ?? professional }
+    @State private var notationPreference: ScorePresentation?
+    private var notation: ScorePresentation { notationPreference ?? (professional ? .staff : .melody) }
+    private var showScore: Bool { notation == .staff }
+    private var showNumbered: Bool { notation == .numbered }
     @State private var instruments = false
     @State private var share: ShareItem?
     @State private var export = false
@@ -52,7 +54,7 @@ import UniformTypeIdentifiers
             Button("保存") { session.edit { $0.name = newName.isEmpty ? "未命名的旋律" : String(newName.prefix(60)) } }
             Button("取消", role: .cancel) {}
         }
-        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { startExport() }; Button("取消", role: .cancel) {} }
+        .confirmationDialog("导出音乐", isPresented: $export, titleVisibility: .visible) { Button(professional ? "项目包（含原始录音）" : "可继续编辑的完整备份") { exportProject() }; Button(professional ? "MIDI 文件" : "给其他音乐软件的旋律文件") { exportMIDI() }; Button(professional ? "WAV 音频" : "可以直接听的音频") { startExport() }; Button("简谱 PDF") { exportNumbered(pdf: true) }; Button("简谱文本") { exportNumbered(pdf: false) }; Button("取消", role: .cancel) {} }
         .alert("保护你的创作", isPresented: $saveFailure) { Button("重试保存") { session.persist() }; Button("紧急导出项目包") { exportProject() }; Button("继续编辑", role: .cancel) {} } message: { Text(session.store.durableRecovery.contains(session.project.id) ? "正式保存未完成，已写入恢复快照，重启后会提示恢复。请重试保存或导出最新项目包。" : "最新修改尚未写入磁盘；恢复快照也未能保存。请立即导出最新项目包，并避免强制退出或删除应用。") }
         .sheet(isPresented: $transpose) { KeyShiftSheet(project: session.project, recordingDirectory: session.store.recordingDirectory, professional: professional) { shifted in session.edit { $0 = shifted } }.presentationDetents([.large]) }
         .confirmationDialog("音符时值跨越小节", isPresented: Binding(get: { overflow != nil }, set: { if !$0 { overflow = nil } }), titleVisibility: .visible) {
@@ -92,9 +94,10 @@ import UniformTypeIdentifiers
                 ToolbarItem(placement: .topBarTrailing) { StudioModeMenu() }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        notationMenu
                         Button("重命名", systemImage: "pencil") { newName = session.project.name; renaming = true }
                         Button("保存到本机", systemImage: "checkmark") { if !session.persist() { saveFailure = true } }
-                    } label: { Label("项目选项", systemImage: "ellipsis") }
+                    } label: { Label("项目选项", systemImage: "ellipsis") }.accessibilityIdentifier("editor.projectMenu")
                 }
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { audio.stopPlayback(); session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.disabled(session.undoHistory.isEmpty).accessibilityLabel("撤销")
@@ -106,12 +109,14 @@ import UniformTypeIdentifiers
                     HStack { Text(session.track.name).font(.subheadline.weight(.medium)); Spacer(); Button(session.saveStatus) { if !session.persist() { saveFailure = true } }.font(.caption).frame(minHeight: 44).foregroundStyle(.secondary).accessibilityIdentifier("editor.saveStatus") }
                     if professional { parameterBar }
                     if rawMode == StudioMode.professional.rawValue { RecognitionEngineControl() }
-                    Picker("编辑视图", selection: $multiTrack) { Text(professional ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各条旋律").tag(true) }.pickerStyle(.segmented)
+                    Picker("编辑视图", selection: $multiTrack) { Text(showNumbered ? "简谱" : showScore ? "五线谱" : "旋律").tag(false); Text(professional ? "多轨编曲" : "各条旋律").tag(true) }.pickerStyle(.segmented)
     }
     @ViewBuilder private var melodyContent: some View {
                     if multiTrack { trackList }
                     else {
-                        if showScore {
+                        if showNumbered {
+                            NumberedScoreView(notes: session.track.notes, key: session.project.key, bpm: session.project.bpm, free: session.project.freeRhythm, selected: session.selectedNote) { session.selectedNote = $0; noteCorrection = true }
+                        } else if showScore {
                         ScoreCanvas(notes: session.track.notes, bars: session.project.bars, freeRhythm: session.project.freeRhythm, selected: session.selectedNote, addMode: addMode,
                                     onSelect: { session.selectedNote = $0; noteCorrection = true }, onAdd: { session.addNote(midi: $0, start: $1) }, onMove: moveNote)
                         } else {
@@ -132,7 +137,7 @@ import UniformTypeIdentifiers
                 Button(expandedTools ? "收起" : "更多工具") { expandedTools.toggle() }
                     .accessibilityLabel(expandedTools ? "收起更多工具" : "展开更多工具").frame(minHeight: 44)
             }
-            if standard && !multiTrack {
+            if standard && !multiTrack && notation == .melody {
                 Text(addMode ? "轻点空白处添加声音，完成后再次点按加号。" : "从左往右是先后，越高的片段声音越高。轻点可修改。")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
@@ -144,7 +149,7 @@ import UniformTypeIdentifiers
             Button { addMode.toggle() } label: { Label(addMode ? "完成添加" : "添加", systemImage: addMode ? "checkmark" : "plus").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.addNote")
             Menu {
                 Button(professional ? "添加声部" : "添加一条旋律", systemImage: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
-                Button(showScore ? "切换为旋律高低图" : "显示参考五线谱", systemImage: "music.note.list") { notationPreference = !showScore; multiTrack = false }
+                notationMenu
                 Button("按选项添加声音", systemImage: "plus.circle") { noteEntry = true }.accessibilityIdentifier("editor.noteEntry")
                 if professional {
                     Button("复制主旋律为新轨道") { session.edit { p in var t = p.tracks[0]; t.id = UUID(); t.name += " · 副本"; t.notes = t.notes.map { var n = $0; n.id = UUID(); return n }; p.tracks.append(t) }; multiTrack = true }
@@ -158,6 +163,15 @@ import UniformTypeIdentifiers
                 }
             } label: { Label("工具", systemImage: "ellipsis").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.toolsMenu")
         }
+    }
+    private var notationMenu: some View {
+        Menu("谱面显示", systemImage: "music.note.list") {
+            ForEach(ScorePresentation.allCases) { presentation in
+                Button { notationPreference = presentation; multiTrack = false; addMode = false } label: {
+                    if notation == presentation { Label(presentation.title, systemImage: "checkmark") } else { Text(presentation.title) }
+                }.accessibilityIdentifier("notation." + presentation.rawValue)
+            }
+        }.accessibilityIdentifier("editor.notationMenu")
     }
     private var editorPresentations: some View {
         editorContent
@@ -338,6 +352,24 @@ import UniformTypeIdentifiers
                 guard !Task.isCancelled, exportIdentity == identity, workspaceVisible else { try? FileManager.default.removeItem(at: url); return }
                 share = ShareItem(url: url)
             } catch { if !Task.isCancelled && exportIdentity == identity { session.store.error = error.localizedDescription } }
+        }
+    }
+    private func exportNumbered(pdf: Bool) {
+        guard !processing else { return }
+        processing = true; stage = "正在生成简谱…"
+        let snapshot = session.project, identity = UUID(); exportIdentity = identity
+        exportTask = Task {
+            defer { if exportIdentity == identity { processing = false; exportTask = nil } }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("StarMusic-" + UUID().uuidString + (pdf ? ".pdf" : ".txt"))
+            let writing = Task.detached(priority: .userInitiated) {
+                if pdf { try NumberedScoreExport.pdf(snapshot, to: url) }
+                else { try Task.checkCancellation(); try NumberedScoreExport.text(snapshot).write(to: url, atomically: true, encoding: .utf8) }
+            }
+            do {
+                try await withTaskCancellationHandler { try await writing.value } onCancel: { writing.cancel() }
+                guard !Task.isCancelled, exportIdentity == identity, workspaceVisible else { try? FileManager.default.removeItem(at: url); return }
+                share = ShareItem(url: url)
+            } catch { try? FileManager.default.removeItem(at: url); if !Task.isCancelled && exportIdentity == identity { session.store.error = error.localizedDescription } }
         }
     }
     private func exportMIDI() { do { let url = FileManager.default.temporaryDirectory.appendingPathComponent(session.project.id.uuidString + ".mid"); try MIDI.export(session.project).write(to: url, options: .atomic); share = ShareItem(url: url) } catch { session.store.error = error.localizedDescription } }
