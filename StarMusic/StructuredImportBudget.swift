@@ -10,6 +10,13 @@ enum StructuredImportBudget {
     }
     static func validate(_ url: URL) throws {
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        try validate(fileBytes: size, availableBytes: UInt64(os_proc_available_memory()))
+        var available = UInt64(os_proc_available_memory())
+        #if targetEnvironment(simulator)
+        // The simulator can report 0 because it has no iOS jetsam limit.
+        // Keep a bounded budget there; a real device reporting 0 still refuses
+        // the import rather than assuming it has spare memory.
+        if available == 0 { available = min(512 * 1024 * 1024, ProcessInfo.processInfo.physicalMemory / 4) }
+        #endif
+        try validate(fileBytes: size, availableBytes: available)
     }
 }

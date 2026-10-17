@@ -866,12 +866,13 @@ final class NumberedNotationTests: XCTestCase {
         XCTAssertEqual(NumberedRhythm(duration: 0.25, free: true).flags, 0)
     }
     func testNumberedPDFPaginatesAndTextRetainsActualTimesWithoutChangingProject() throws {
-        var p = MusicProject(); p.name = "简谱导出回归"; p.bpm = 120; p.freeRhythm = true
+        var p = MusicProject(); p.name = "简谱导出回归"; p.bpm = 120; p.freeRhythm = false
         var notes: [MusicNote] = []
         for i in 0..<26 {
-            let pitch: Int? = i == 0 ? nil : 60 + i % 12
+            let pitch: Int? = i == 0 ? nil : 48 + i % 37
             let start = Double(i) * 0.123
-            notes.append(MusicNote(midi: pitch, start: start, duration: 0.1875))
+            let durations: [Double] = [0.1875, 0.25, 0.5, 1, 2, 3, 4, 0.03125]
+            notes.append(MusicNote(midi: pitch, start: start, duration: durations[i % durations.count]))
         }
         p.tracks[0].notes = notes
         let before = p
@@ -882,6 +883,9 @@ final class NumberedNotationTests: XCTestCase {
         try NumberedScoreExport.pdf(p, to: file)
         let document = try XCTUnwrap(PDFDocument(url: file))
         XCTAssertEqual(document.pageCount, 2)
+        let preview = try XCTUnwrap(document.page(at: 0)).thumbnail(of: CGSize(width: 595, height: 842), for: .mediaBox)
+        let previewAttachment = XCTAttachment(image: preview); previewAttachment.name = "Numbered-PDF-Actual-Page"; previewAttachment.lifetime = .keepAlways; add(previewAttachment)
+        let pdfAttachment = XCTAttachment(data: try Data(contentsOf: file), uniformTypeIdentifier: "com.adobe.pdf"); pdfAttachment.name = "Numbered-Score-Export"; pdfAttachment.lifetime = .keepAlways; add(pdfAttachment)
         XCTAssertTrue(try XCTUnwrap(document.page(at: 0)?.string).contains("1 = C"))
         XCTAssertEqual(p, before, "Notation conversion/export must not quantize or replace editable music or originals.")
     }

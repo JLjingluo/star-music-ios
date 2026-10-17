@@ -14,10 +14,11 @@ struct ScoreLayout {
     let hasCollapsedGaps: Bool
     private let anchors: [(beat: Double, x: CGFloat)]
     private let positions: [UUID: CGFloat]
-    static func pages(_ notes: [MusicNote]) -> [[MusicNote]] {
+    static func pages(_ notes: [MusicNote], pageSize: Int = 32) -> [[MusicNote]] {
+        let limit = max(1, min(32, pageSize))
         let ordered = notes.sorted { $0.start == $1.start ? $0.id.uuidString < $1.id.uuidString : $0.start < $1.start }
         if ordered.isEmpty { return [[]] }
-        return stride(from: 0, to: ordered.count, by: 32).map { Array(ordered[$0..<min($0 + 32, ordered.count)]) }
+        return stride(from: 0, to: ordered.count, by: limit).map { Array(ordered[$0..<min($0 + limit, ordered.count)]) }
     }
     init(notes: [MusicNote]) {
         self.notes = notes

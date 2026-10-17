@@ -146,7 +146,7 @@ import UniformTypeIdentifiers
     @ViewBuilder private var visibleTools: some View {
         Button { instruments = true } label: { Label(simpleMode ? "换种声音" : session.track.instrument.name, systemImage: session.track.instrument.symbol).frame(minHeight: 44) }.musicAction()
         if !simpleMode {
-            Button { addMode.toggle() } label: { Label(addMode ? "完成添加" : "添加", systemImage: addMode ? "checkmark" : "plus").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.addNote")
+            Button { if showNumbered { noteEntry = true } else { addMode.toggle() } } label: { Label(addMode ? "完成添加" : "添加", systemImage: addMode ? "checkmark" : "plus").frame(minHeight: 44) }.musicAction().accessibilityIdentifier("editor.addNote")
             Menu {
                 Button(professional ? "添加声部" : "添加一条旋律", systemImage: "square.stack.3d.up") { addTrack = true }.accessibilityIdentifier("editor.addTrack")
                 notationMenu

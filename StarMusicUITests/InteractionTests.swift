@@ -167,6 +167,12 @@ final class InteractionTests: XCTestCase {
         note.tap(); XCTAssertTrue(app.navigationBars["调整这个片段"].waitForExistence(timeout: 5))
         app.buttons["高一点"].tap(); app.buttons["完成"].tap()
         XCTAssertNotEqual(app.buttons[id].label, original)
+        let add = app.buttons["editor.addNote"]
+        for _ in 0..<3 where !add.isHittable { app.swipeUp() }
+        XCTAssertTrue(add.isHittable); add.tap()
+        XCTAssertTrue(app.navigationBars["添加一个声音"].waitForExistence(timeout: 5))
+        app.buttons["noteEntry.add"].tap()
+        XCTAssertTrue(app.otherElements["editor.numberedScore"].waitForExistence(timeout: 5))
         app.buttons["保存与分享"].tap(); app.buttons["简谱 PDF"].tap()
         XCTAssertTrue(app.otherElements["system.shareSheet"].waitForExistence(timeout: 15)); capture("Numbered-PDF-Native-Share")
     }
