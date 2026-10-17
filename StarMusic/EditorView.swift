@@ -311,7 +311,8 @@ import UniformTypeIdentifiers
     private func copyBar() { let bar = floor((session.selected?.start ?? 0) / 4), end = Double(session.project.bars) * 4, notes = session.track.notes.filter { floor($0.start / 4) == bar }, t = session.trackIndex; session.edit { p in p.tracks[t].notes += notes.map { var n = $0; n.id = UUID(); n.start = n.start - bar * 4 + end; return n } } }
     private func applyInstrument(_ instrument: Instrument, _ scope: String, _ start: Int, _ end: Int) {
         audio.stopPlayback(); let t = session.trackIndex, selected = session.selectedNote
-        session.edit { p in
+        let previousCount = session.project.tracks.count
+        let applied = session.edit { p in
             if scope == "整条轨道" { p.tracks[t].instrument = instrument; p.tracks[t].useOriginalAudio = false }
             else {
                 let chosen = p.tracks[t].notes.filter { scope == "选中音符" ? $0.id == selected : $0.start >= Double(start - 1) * 4 && $0.start < Double(end) * 4 }
@@ -322,7 +323,7 @@ import UniformTypeIdentifiers
                 p.tracks.append(part)
             }
         }
-        if scope != "整条轨道", let last = session.project.tracks.last { selectTrack(last.id); multiTrack = true }
+        if applied, scope != "整条轨道", session.project.tracks.count > previousCount, let last = session.project.tracks.last { selectTrack(last.id); multiTrack = true }
         instruments = false
     }
     private func exportProject() {

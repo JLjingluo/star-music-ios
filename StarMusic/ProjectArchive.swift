@@ -28,7 +28,7 @@ enum ProjectArchive {
             try copy(source, to: handle, bytes: item.bytes)
         }
         try handle.synchronize(); try handle.close()
-        if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
+        guard !FileManager.default.fileExists(atPath: output.path) else { throw MusicError.operation("备份目标已存在，请重新导出到新文件") }
         try FileManager.default.moveItem(at: staging, to: output); complete = true
     }
     static func header(from url: URL) throws -> Header? {

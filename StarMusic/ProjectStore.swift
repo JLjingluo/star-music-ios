@@ -158,7 +158,7 @@ import AVFoundation
     func package(_ snapshot: MusicProject, preferRecovery: Bool = true) throws -> URL {
         let p = preferRecovery ? unsavedProjects[snapshot.id] ?? snapshot : snapshot
         try p.validate(); try verifyAudio(p)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(p.id.uuidString + ".starmusic")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".starmusic")
         try ProjectArchive.write(p, recordings: recordingDirectory, to: url); return url
     }
     func packageAsync(_ snapshot: MusicProject, preferRecovery: Bool = true) async throws -> URL {

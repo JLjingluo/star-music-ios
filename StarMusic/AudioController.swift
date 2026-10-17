@@ -124,7 +124,13 @@ import UIKit
     func preview(_ instrument: Instrument, midi: Int? = nil) async throws { try await play(Self.previewProject(instrument, midi: midi)) }
     var isLooping: Bool { player?.numberOfLoops == -1 }
     func playOriginal(_ url: URL, from start: Double = 0, length: Double? = nil) throws {
-        stopPlayback(); try configurePlayback(); player = try AVAudioPlayer(contentsOf: url); player?.delegate = self; player?.currentTime = start; player?.play()
+        guard start.isFinite, start >= 0, length.map({ $0.isFinite && $0 > 0 }) ?? true else { throw MusicError.invalidProject }
+        stopPlayback(); try configurePlayback()
+        let source = try AVAudioPlayer(contentsOf: url)
+        guard start < source.duration else { throw MusicError.operation("这段音符对应的录音位置超出原声范围，请重新校正") }
+        source.delegate = self; source.currentTime = start
+        guard source.play() else { throw MusicError.operation("无法启动原声试听，请稍后重试") }
+        player = source
         let generation = playbackGeneration
         if let length { Task { [weak self] in try? await Task.sleep(for: .seconds(length)); if self?.playbackGeneration == generation { self?.stopPlayback() } } }
     }
